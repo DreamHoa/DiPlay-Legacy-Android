@@ -643,16 +643,17 @@ class Iap2UsbSession internal constructor(
      * The control channel is low-rate, so the pinned-array cost of bulkTransfer is negligible.
      */
     private fun readSynchronously(timeoutMillis: Long): ByteArray? {
-        val deadline = System.nanoTime() + timeoutMillis * 1_000_000
-        while (true) {
-            val remaining = ((deadline - System.nanoTime()) / 1_000_000).toInt().coerceIn(1, Int.MAX_VALUE)
-            val transferred = try {
+        val transferred = try {
+            readUsbWithDeadline(timeoutMillis, ::checkOpen, { remaining ->
                 connection.bulkTransfer(inEndpoint, syncReadBuffer, syncReadBuffer.size, remaining)
-            } catch (error: RuntimeException) {
-                throw failSession("USBMUX read failed", error)
-            }
-            if (transferred > 0) return syncReadBuffer.copyOf(transferred)
+            })
+        } catch (error: RuntimeException) {
+            throw failSession("USBMUX read failed", error)
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw failSession("USBMUX read interrupted", error)
         }
+        return transferred?.let(syncReadBuffer::copyOf)
     }
 
     private fun checkOpen() {

@@ -48,6 +48,29 @@ internal fun writeUsbChunks(
     return offset
 }
 
+/** Old usbfs returns -1 for both a normal timeout and an immediately failed transfer. */
+internal fun readUsbWithDeadline(
+    timeoutMillis: Long,
+    checkOpen: () -> Unit,
+    transfer: (timeoutMillis: Int) -> Int,
+    nanoTime: () -> Long = System::nanoTime,
+    pause: (millis: Long) -> Unit = Thread::sleep,
+): Int? {
+    require(timeoutMillis > 0)
+    val deadline = nanoTime() + timeoutMillis.coerceAtMost(Int.MAX_VALUE.toLong()) * 1_000_000L
+    while (true) {
+        checkOpen()
+        val remaining = (deadline - nanoTime()) / 1_000_000L
+        if (remaining <= 0) return null
+        val count = transfer(remaining.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+        if (count > 0) return count
+        // A disconnected fd can fail instantly. Pace retries, recheck close and honor the deadline.
+        val afterTransfer = (deadline - nanoTime()) / 1_000_000L
+        if (afterTransfer <= 0) return null
+        pause(minOf(10L, afterTransfer))
+    }
+}
+
 internal fun waitForUsbRequest(connection: UsbDeviceConnection, timeoutMillis: Long): UsbRequest? =
     if (realSdkInt() >= Build.VERSION_CODES.O) connection.requestWait(timeoutMillis.coerceAtLeast(1))
     else connection.requestWait()

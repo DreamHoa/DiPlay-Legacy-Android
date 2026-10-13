@@ -407,13 +407,15 @@ class NcmUsbBridge internal constructor(
     }
 
     private fun readChunkSynchronously(timeoutMillis: Long): Int? {
-        checkOpen()
-        val timeout = timeoutMillis.coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()
         return try {
-            connection.bulkTransfer(inEndpoint, readBuffer, readBuffer.size, timeout)
-                .takeIf { it > 0 }
+            readUsbWithDeadline(timeoutMillis, ::checkOpen, { remaining ->
+                connection.bulkTransfer(inEndpoint, readBuffer, readBuffer.size, remaining)
+            })
         } catch (error: RuntimeException) {
             throw failSession("NCM synchronous read failed", error)
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw failSession("NCM synchronous read interrupted", error)
         }
     }
 

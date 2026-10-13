@@ -237,6 +237,9 @@ class SmoothVideoHostLifecycleTest {
         val config = byteArrayOf(1, 0x42, 0xC0.toByte(), 0x1E, 0xFF.toByte(), 0xE1.toByte(),
             0, sps.size.toByte()) + sps + byteArrayOf(1, 0, pps.size.toByte()) + pps
         closing.onVideoConfig(110, config)
+        // Decoder initialization on a cold CI worker may exceed the 250 ms frame-age limit.
+        // Submit the test frame after configuration so it reaches the fake blocking codec.
+        assertTrue("The fake decoder is configured", codec.configured.await(5, TimeUnit.SECONDS))
         closing.onVideoFrame(110, byteArrayOf(0, 0, 0, 1, 0x65, 0x88.toByte(), 0x84.toByte(), 0x21))
         assertTrue("The decoder is blocked inside queueInputBuffer", codec.entered.await(5, TimeUnit.SECONDS))
         val controller = mock(CarPlayController::class.java)
@@ -269,6 +272,7 @@ class SmoothVideoHostLifecycleTest {
 
     /** A fake native codec call that ignores close's interrupt until the test lets it return. */
     private class BlockingCodec : ShadowMediaCodec.CodecConfig.Codec {
+        val configured = CountDownLatch(1)
         val entered = CountDownLatch(1)
         private val gate = CountDownLatch(1)
 
@@ -283,7 +287,9 @@ class SmoothVideoHostLifecycleTest {
             if (interrupted) Thread.currentThread().interrupt()
         }
 
-        override fun onConfigured(format: MediaFormat?, surface: Surface?, crypto: MediaCrypto?, flags: Int) = Unit
+        override fun onConfigured(format: MediaFormat?, surface: Surface?, crypto: MediaCrypto?, flags: Int) {
+            configured.countDown()
+        }
     }
 
     private fun setSinkField(sink: AndroidMediaSink, name: String, value: Any) {
