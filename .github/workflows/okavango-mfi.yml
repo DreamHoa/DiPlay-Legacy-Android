@@ -1,13 +1,8 @@
 name: Okavango MFi car-test APK
 
-# Manual releases only. The push hook below is a one-time bootstrap trigger,
-# restricted to this workflow file and a specific commit message marker.
+# This uses credentials and is intentionally manual only.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/okavango-mfi.yml
 
 permissions:
   contents: read
@@ -18,7 +13,6 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[run-mfi-once]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
