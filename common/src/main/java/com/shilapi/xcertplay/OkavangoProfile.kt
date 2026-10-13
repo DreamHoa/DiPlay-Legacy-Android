@@ -14,8 +14,12 @@ object OkavangoProfile {
             hardware.equals("mt6735", ignoreCase = true) &&
             device.equals("VF12LQJ", ignoreCase = true)
 
-    fun apply(context: Context) {
-        if (!matches(Build.VERSION.SDK_INT, Build.MODEL, Build.HARDWARE, Build.DEVICE)) return
+    fun apply(context: Context) =
+        apply(context, Build.VERSION.SDK_INT, Build.MODEL, Build.HARDWARE, Build.DEVICE)
+
+    // Explicit device properties allow testing the E01/API22 selection rules on a supported JVM.
+    internal fun apply(context: Context, sdk: Int, model: String, hardware: String, device: String) {
+        if (!matches(sdk, model, hardware, device)) return
         val preferences = context.getSharedPreferences("xcertplay_airplay", Context.MODE_PRIVATE)
         if (preferences.getBoolean(MARKER, false)) return
         val defaults: Map<String, Any> = linkedMapOf(
