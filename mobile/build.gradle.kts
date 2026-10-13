@@ -27,14 +27,15 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.shihab.diplay"
-        minSdk = 19
+        applicationId = "com.shihab.diplay.okavango"
+        minSdk = 22
         targetSdk = 37
         multiDexEnabled = true
         multiDexKeepProguard = file("multidex-config.pro")
         testInstrumentationRunner = "com.shilapi.xcertplay.T3LegacyInstrumentation"
-        versionCode = 66
-        versionName = "0.2.46"
+        versionCode = 67
+        versionName = "0.2.46-okavango.1"
+        ndk { abiFilters += setOf("arm64-v8a", "armeabi-v7a") }
 
     }
 
@@ -56,8 +57,9 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".hudtest"
-            versionNameSuffix = "-hud-test"
+            // Separate installation preserves the original app and its phone pairings.
+            applicationIdSuffix = null
+            versionNameSuffix = null
         }
         release {
             optimization {

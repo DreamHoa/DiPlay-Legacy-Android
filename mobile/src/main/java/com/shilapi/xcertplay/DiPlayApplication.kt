@@ -15,6 +15,7 @@ class DiPlayApplication : MultiDexApplication() {
 
     override fun onCreate() {
         super.onCreate()
+        OkavangoProfile.apply(this)
         setupCrashHandler()
     }
 
