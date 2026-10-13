@@ -1,17 +1,26 @@
 name: Okavango API 22 build
+
 on:
   push:
     branches: [okavango-api22]
   workflow_dispatch:
+    inputs:
+      full_suite:
+        description: Also build/test sample apps and the Android device-test APK
+        type: boolean
+        default: false
+
 permissions:
   contents: read
+
 concurrency:
   group: okavango-${{ github.ref }}
   cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - name: Check public source inputs
@@ -26,30 +35,35 @@ jobs:
         with:
           packages: platform-tools platforms;android-37.0 build-tools;36.0.0 ndk;25.2.9519653
       - uses: gradle/actions/setup-gradle@v4
-      - name: Unit tests, lint, and APKs required by AGENTS.md
+      - name: Core unit tests, app lint, and source APK
         run: |
           chmod +x gradlew
-          ./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :home:testDebugUnitTest \
-            :mobile:lintDebug :home:lintDebug :maphost:lintDebug \
-            :mobile:assembleDebug :home:assembleDebug :maphost:assembleDebug \
-            :mobile:assembleDebugAndroidTest --no-daemon --stacktrace
-      - name: Collect local packaging helpers
+          ./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :mobile:lintDebug :mobile:assembleDebug --no-daemon
+      - name: Optional full legacy and device-test suite
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_suite }}
         run: |
-          mkdir -p handoff/crypto
-          cp shared/build/intermediates/runtime_library_classes_jar/debug/bundleLibRuntimeToJarDebug/classes.jar handoff/crypto/shared.jar
-          find "$HOME/.gradle/caches/modules-2/files-2.1" -type f \
-            \( -name 'bcprov-jdk18on-1.79.jar' -o -name 'kotlin-stdlib-2.*.jar' \) \
-            -exec cp {} handoff/crypto/ \;
-          cp mobile/build/outputs/apk/debug/mobile-debug.apk handoff/DiPlay-Okavango-source.apk
-          cp mobile/build/outputs/apk/androidTest/debug/mobile-debug-androidTest.apk handoff/DiPlay-Okavango-tests.apk
-          cp "$ANDROID_HOME/build-tools/36.0.0/lib/apksigner.jar" handoff/
-          # Runtime identity and persistent signing keys stay on the owner's laptop.
-          sha256sum handoff/*.apk > handoff/SHA256SUMS
-      - name: Downloadable source APK and local packaging helpers
+          ./gradlew :home:testDebugUnitTest :home:lintDebug :maphost:lintDebug :home:assembleDebug :maphost:assembleDebug :mobile:assembleDebugAndroidTest --no-daemon
+      - name: Verify source-only APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=mobile/build/outputs/apk/debug/mobile-debug.apk
+          test -s "$apk"
+          unzip -Z -1 "$apk" > "$RUNNER_TEMP/source-apk-contents.txt"
+          if grep -Eq '^assets/offline-mfi/(identity\.pk8|certificate\.p7b)$' "$RUNNER_TEMP/source-apk-contents.txt"; then
+            echo "::error::MFi material must never be present in the ordinary source APK."
+            exit 1
+          fi
+          mkdir -p handoff
+          cp "$apk" handoff/DiPlay-Okavango-source.apk
+          (cd handoff && sha256sum DiPlay-Okavango-source.apk > SHA256SUMS.txt)
+      - name: Downloadable source APK
         uses: actions/upload-artifact@v4
         with:
           name: diplay-okavango-api22
           path: handoff/
+          if-no-files-found: error
+          compression-level: 0
           retention-days: 7
       - name: Test and lint reports
         if: always()

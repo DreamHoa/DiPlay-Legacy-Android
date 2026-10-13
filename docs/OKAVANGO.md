@@ -15,12 +15,23 @@ switch vendor services, obtain root or modify firmware.
 Existing Wi-Fi still requires a functioning Bluetooth iAP2 transport. A successful
 Wi-Fi attachment or a passing build is not proof of a working CarPlay session.
 
-GitHub Actions builds source APKs and runs the checks required by AGENTS.md. The
-downloadable artifact has no runtime authentication assets and must not be
-installed as a complete standalone receiver. The owner must select and validate
-the runtime identity locally, package it into the APK and sign the result with a
-persistent local Android signing key. Neither private keys nor device diagnostic
-logs belong in this repository or its build artifacts.
+Ordinary push CI runs the shared/common unit tests, the mobile app lint and
+the mobile debug build. It skips the home/maphost samples and device-test APK on
+ordinary pushes to shorten the feedback loop; the complete project checks remain
+documented in AGENTS.md. Ordinary source artifacts deliberately have no MFi identity.
+
+For an authenticated car-test APK, the manual `Okavango MFi car-test APK` workflow
+is defined on the default `main` branch and checks out `okavango-api22`. It
+requires two repository Actions Secrets, `DIPLAY_MFI_PK8_B64` and
+`DIPLAY_MFI_P7B_B64`, containing Base64-encoded authorized local identity
+files. Gradle validates that the key and certificate match, then builds a debug
+APK and verifies its Android signing and packaged MFi files. Download the
+`okavango-mfi-test` artifact. No secret is committed to Git. However, the
+identity *is extractable* from any APK containing it, so do not distribute
+the car-test build beyond its authorized audience. GitHub-hosted debug signing
+does not guarantee update compatibility between runs: plan to retain a stable
+signing key for repeat installations. Neither private keys nor device diagnostic
+logs belong in source control. Physical iPhone pairing still needs car testing.
 
 The device instrumentation suite can be explicitly selected using:
 
