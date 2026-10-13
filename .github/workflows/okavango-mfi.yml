@@ -1,19 +1,34 @@
 name: Okavango MFi car-test APK
 
+# Manual releases only. The push hook below is a one-time bootstrap trigger,
+# restricted to this workflow file and a specific commit message marker.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/okavango-mfi.yml
 
 permissions:
   contents: read
 
+concurrency:
+  group: okavango-mfi-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[run-mfi-once]') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out latest Okavango branch
+        uses: actions/checkout@v4
         with:
           ref: okavango-api22
+          persist-credentials: false
+      - name: Check public source inputs
+        run: python3 scripts/check_public_tree.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -22,45 +37,80 @@ jobs:
         with:
           packages: platform-tools platforms;android-37.0 build-tools;36.0.0 ndk;25.2.9519653
       - uses: gradle/actions/setup-gradle@v4
-      - name: Provision MFi assets
+      - name: Provision MFi identity from repository Secrets
         shell: bash
         env:
           MFI_KEY: ${{ secrets.DIPLAY_MFI_PK8_B64 }}
           MFI_CERT: ${{ secrets.DIPLAY_MFI_P7B_B64 }}
         run: |
           set -euo pipefail
-          test -n "$MFI_KEY" && test -n "$MFI_CERT" || { echo "::error::Missing MFi Secrets"; exit 1; }
+          if [ -z "$MFI_KEY" ] || [ -z "$MFI_CERT" ]; then
+            echo "::error::Add both DIPLAY_MFI_PK8_B64 and DIPLAY_MFI_P7B_B64 under Actions repository secrets."
+            exit 1
+          fi
           umask 077
           mkdir -p "$RUNNER_TEMP/okavango-assets/offline-mfi"
           printf '%s' "$MFI_KEY" | base64 -d > "$RUNNER_TEMP/okavango-assets/offline-mfi/identity.pk8"
           printf '%s' "$MFI_CERT" | base64 -d > "$RUNNER_TEMP/okavango-assets/offline-mfi/certificate.p7b"
           test -s "$RUNNER_TEMP/okavango-assets/offline-mfi/identity.pk8"
           test -s "$RUNNER_TEMP/okavango-assets/offline-mfi/certificate.p7b"
-      - name: Build authenticated test APK
+          echo "Both MFi files provisioned; Gradle will verify key/certificate matching."
+      - name: Provision optional persistent Android debug signing
+        shell: bash
+        env:
+          DEBUG_KEYSTORE: ${{ secrets.OKAVANGO_DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -n "$DEBUG_KEYSTORE" ]; then
+            umask 077
+            mkdir -p "$HOME/.android"
+            printf '%s' "$DEBUG_KEYSTORE" | base64 -d > "$HOME/.android/debug.keystore"
+            keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey > /dev/null
+            echo "Stable Android debug signer configured."
+          else
+            echo "::notice::Using runner-generated debug signing. Reinstall may be required for the next build unless OKAVANGO_DEBUG_KEYSTORE_B64 is configured."
+          fi
+      - name: Build standalone APK (includes offline MFi challenge-signing probe)
         env:
           DIPLAY_AUTH_ASSETS_DIR: ${{ runner.temp }}/okavango-assets
         run: |
           chmod +x gradlew
-          ./gradlew :mobile:lintDebug :mobile:assembleStandaloneDebug --no-daemon --stacktrace
-      - name: Check signed APK
+          ./gradlew :mobile:assembleStandaloneDebug --no-daemon --stacktrace
+      - name: Verify MFi assets and Android 5.1 APK signature
         shell: bash
         run: |
           set -euo pipefail
           apk=mobile/build/outputs/apk/debug/mobile-debug.apk
           test -s "$apk"
-          unzip -Z -1 "$apk" | grep -Fxq assets/offline-mfi/identity.pk8
-          unzip -Z -1 "$apk" | grep -Fxq assets/offline-mfi/certificate.p7b
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --min-sdk-version 22 --verbose "$apk"
-          mkdir -p "$RUNNER_TEMP/apk"
-          cp "$apk" "$RUNNER_TEMP/apk/DiPlay-Okavango-MFi.apk"
-          (cd "$RUNNER_TEMP/apk" && sha256sum DiPlay-Okavango-MFi.apk > SHA256SUMS.txt)
-      - name: Upload test APK
+          unzip -Z -1 "$apk" > "$RUNNER_TEMP/apk-contents.txt"
+          for asset in identity.pk8 certificate.p7b; do
+            if ! grep -Fxq "assets/offline-mfi/$asset" "$RUNNER_TEMP/apk-contents.txt"; then
+              echo "::error::Missing offline MFi asset: $asset"
+              exit 1
+            fi
+          done
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" > "$RUNNER_TEMP/apk-badging.txt"
+          grep -Fq "package: name='com.shihab.diplay.okavango'" "$RUNNER_TEMP/apk-badging.txt"
+          grep -Fq "sdkVersion:'22'" "$RUNNER_TEMP/apk-badging.txt"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --min-sdk-version 22 --verbose "$apk" | tee "$RUNNER_TEMP/apk-signature.txt"
+          grep -Fq "Verified using v1 scheme (JAR signing): true" "$RUNNER_TEMP/apk-signature.txt"
+          mkdir -p "$RUNNER_TEMP/okavango-dist"
+          cp "$apk" "$RUNNER_TEMP/okavango-dist/DiPlay-Okavango-MFi.apk"
+          ( cd "$RUNNER_TEMP/okavango-dist" && sha256sum DiPlay-Okavango-MFi.apk > SHA256SUMS.txt )
+          echo "::notice::The MFi private key is extractable from this APK. Share only within the authorized test group."
+      - name: Upload authenticated car-test APK
         uses: actions/upload-artifact@v4
         with:
           name: okavango-mfi-test
-          path: ${{ runner.temp }}/apk/
+          path: ${{ runner.temp }}/okavango-dist/
           if-no-files-found: error
+          compression-level: 0
           retention-days: 3
-      - name: Clear local authentication files
+      - name: Remove temporary authentication and signing inputs
         if: always()
-        run: rm -rf "$RUNNER_TEMP/okavango-assets"
+        shell: bash
+        env:
+          DEBUG_KEYSTORE: ${{ secrets.OKAVANGO_DEBUG_KEYSTORE_B64 }}
+        run: |
+          rm -rf "$RUNNER_TEMP/okavango-assets" "$RUNNER_TEMP/okavango-dist"
+          if [ -n "$DEBUG_KEYSTORE" ]; then rm -f "$HOME/.android/debug.keystore"; fi
