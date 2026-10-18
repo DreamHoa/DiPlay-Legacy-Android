@@ -1,8 +1,6 @@
 package com.shilapi.xcertplay
 
-import android.app.LocaleManager
 import android.content.Context
-import android.os.LocaleList
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -11,53 +9,53 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [33], manifest = Config.NONE)
+@Config(sdk = [28], manifest = Config.NONE)
 class AppLocaleTest {
-    private val context get() = RuntimeEnvironment.getApplication()
-    private val manager get() = context.getSystemService(LocaleManager::class.java)
+    private val app get() = RuntimeEnvironment.getApplication()
 
-    @Test fun onlyEnglishAndSimplifiedChineseMayBeSelected() {
+    @Test fun languagePickerOffersOnlySystemEnglishAndSimplifiedChinese() {
         assertEquals(listOf(AppLocale.SYSTEM, AppLocale.ENGLISH, AppLocale.SIMPLIFIED_CHINESE), AppLocale.ALL)
-        AppLocale.save(context, AppLocale.ENGLISH)
-        assertEquals("en", manager.applicationLocales.toLanguageTags())
-        AppLocale.save(context, AppLocale.SIMPLIFIED_CHINESE)
-        assertEquals("zh-CN", manager.applicationLocales.toLanguageTags())
-        AppLocale.save(context, AppLocale.SYSTEM)
-        assertTrue(manager.applicationLocales.isEmpty)
-        assertEquals(AppLocale.SYSTEM, AppLocale.preference(context))
+        assertEquals("English", AppLocale.displayName(app, AppLocale.ENGLISH))
+        assertEquals("简体中文", AppLocale.displayName(app, AppLocale.SIMPLIFIED_CHINESE))
     }
 
-    @Test fun unsupportedPlatformLanguageFallsBackToSystem() {
-        manager.applicationLocales = LocaleList.forLanguageTags("es")
-        assertEquals(AppLocale.SYSTEM, AppLocale.preference(context))
-        for (tag in listOf("zh-CN", "zh-TW", "zh-Hant-HK")) {
-            manager.applicationLocales = LocaleList.forLanguageTags(tag)
-            assertEquals(AppLocale.SIMPLIFIED_CHINESE, AppLocale.preference(context))
+    @Test fun explicitEnglishAndChineseWrapWithoutMutatingGlobalResources() {
+        val original = app.resources.configuration.locales.toLanguageTags()
+        try {
+            AppLocale.save(app, AppLocale.ENGLISH)
+            assertEquals("en", AppLocale.wrap(app).resources.configuration.locales[0].language)
+            AppLocale.save(app, AppLocale.SIMPLIFIED_CHINESE)
+            assertEquals("zh-CN", AppLocale.wrap(app).resources.configuration.locales.toLanguageTags())
+            assertEquals(original, app.resources.configuration.locales.toLanguageTags())
+        } finally {
+            AppLocale.save(app, AppLocale.SYSTEM)
         }
-        manager.applicationLocales = LocaleList.forLanguageTags("en-US")
-        assertEquals(AppLocale.ENGLISH, AppLocale.preference(context))
     }
 
-    @Test fun unsupportedLegacyLanguageDoesNotMigrate() {
-        context.getSharedPreferences("diplay", Context.MODE_PRIVATE).edit()
-            .putString("app_language", "ar")
-            .putBoolean("app_language_platform_migrated", false)
-            .commit()
-        manager.applicationLocales = LocaleList.getEmptyLocaleList()
-        assertSame(context, AppLocale.wrap(context))
-        assertTrue(manager.applicationLocales.isEmpty)
-        assertEquals(AppLocale.SYSTEM, AppLocale.preference(context))
+    @Test fun legacyUnsupportedLanguageFallsBackToSystem() {
+        app.getSharedPreferences("diplay", Context.MODE_PRIVATE).edit()
+            .putString("app_language", "ar").commit()
+        assertEquals(AppLocale.SYSTEM, AppLocale.preference(app))
+        assertSame(app, AppLocale.wrap(app))
+        AppLocale.save(app, AppLocale.SYSTEM)
     }
 
-    @Test @Config(sdk = [28, 32])
-    fun olderAndroidUsesEnglishOrSimplifiedChineseOnly() {
-        AppLocale.save(context, AppLocale.ENGLISH)
-        assertEquals("en", AppLocale.wrap(context).resources.configuration.locales[0].language)
-        AppLocale.save(context, AppLocale.SIMPLIFIED_CHINESE)
-        assertEquals("zh", AppLocale.wrap(context).resources.configuration.locales[0].language)
-        context.getSharedPreferences("diplay", Context.MODE_PRIVATE).edit()
-            .putString("app_language", "ru").commit()
-        assertEquals(AppLocale.SYSTEM, AppLocale.preference(context))
-        assertSame(context, AppLocale.wrap(context))
+    @Test fun enforcedChineseSurvivesHeadUnitLocaleReset() {
+        try {
+            AppLocale.save(app, AppLocale.SIMPLIFIED_CHINESE)
+            @Suppress("DEPRECATION")
+            app.resources.updateConfiguration(
+                android.content.res.Configuration(app.resources.configuration).apply {
+                    setLocale(java.util.Locale.ENGLISH)
+                },
+                app.resources.displayMetrics,
+            )
+            assertTrue(AppLocale.enforce(app))
+            assertEquals("zh", app.resources.configuration.locales[0].language)
+            assertFalse(AppLocale.enforce(app))
+        } finally {
+            AppLocale.save(app, AppLocale.SYSTEM)
+            AppLocale.enforce(app)
+        }
     }
 }

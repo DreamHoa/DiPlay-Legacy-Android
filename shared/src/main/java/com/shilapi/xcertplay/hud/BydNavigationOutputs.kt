@@ -1,15 +1,27 @@
 package com.shilapi.xcertplay.hud
 
 import android.content.Context
+import android.os.Build
 import com.shilapi.xcertplay.iap2.wire.Iap2Frame
 
 /** Nonblocking boundary between phone control messages and vendor services. */
 object BydNavigationOutputs {
+    /** The VF12LQJ has the ECARX PopView input service, not BYD HUD/cluster IPC. */
+    internal fun isOkavango(sdk: Int, model: String, hardware: String, device: String): Boolean =
+        sdk == 22 && model.equals("E01", ignoreCase = true) &&
+            hardware.equals("mt6735", ignoreCase = true) &&
+            device.equals("VF12LQJ", ignoreCase = true)
+
+    private fun isOkavango(): Boolean =
+        isOkavango(Build.VERSION.SDK_INT, Build.MODEL, Build.HARDWARE, Build.DEVICE)
+
     /** Recover a journaled interrupted output when the app opens, even before a phone reconnects. */
     fun onAppOpened(context: Context) {
+        // Wi-Fi recovery is shared with Geely and must remain active.
+        com.shilapi.xcertplay.network.WifiScanPause.restoreIfNeeded(context)
+        if (isOkavango()) return
         BydOemClusterNavi.restoreIfNeeded(context)
         BydDiLink3ClusterOutput.restoreIfNeeded(context)
-        com.shilapi.xcertplay.network.WifiScanPause.restoreIfNeeded(context)
         if (BydStandaloneHudOutput.available(context)) start(context)
         // Read the battery early, so a reading is ready when CarPlay identifies (see batteryStatus).
         if (BydOutputSettings.batteryToIphoneActive(context)) BydBatteryStatus.start(context)
@@ -57,6 +69,7 @@ object BydNavigationOutputs {
     fun parked(context: Context): Boolean? = BydParkedState.parked(context.applicationContext)
 
     fun start(context: Context) {
+        if (isOkavango()) return // Avoid BYD vendor Binder/ADB workers on the E01.
         val app = context.applicationContext
         useStandalone = BydStandaloneHudOutput.available(app)
         if (useStandalone) standalone.start { BydStandaloneNavigationBridge.initialize(app) }
@@ -70,6 +83,7 @@ object BydNavigationOutputs {
     }
 
     internal fun onFrame(frame: Iap2Frame) {
+        if (isOkavango()) return // No BYD instrument/HUD output on this unit.
         if (frame.messageId == ClusterSongState.NOW_PLAYING_UPDATE) {
             BydClusterSong.onFrame(frame)
             return
@@ -143,7 +157,9 @@ object BydNavigationOutputs {
 
     /** Best effort while alive; Android does not guarantee callbacks before force-stop. */
     fun endNow(preserveTurnOverlay: Boolean = false) {
-        standalone.clear(); hud.clear(); cluster.clear(); BydClusterSong.end(); BydCarPlayCall.end()
+        if (!isOkavango()) {
+            standalone.clear(); hud.clear(); cluster.clear(); BydClusterSong.end(); BydCarPlayCall.end()
+        }
         // Only a wireless session replacement retains the card. Explicit controller close
         // and wired disconnect still clear it immediately.
         if (!preserveTurnOverlay) {

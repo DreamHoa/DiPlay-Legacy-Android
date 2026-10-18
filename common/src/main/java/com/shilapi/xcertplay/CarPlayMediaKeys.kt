@@ -14,7 +14,6 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaMetadata
-import android.media.RemoteControlClient
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Handler
@@ -59,8 +58,6 @@ internal object CarPlayMediaKeys {
     private var artworkOwner: Any? = null
     private var controller: CarPlayController? = null
     private var session: MediaSession? = null
-    private var legacyClient: RemoteControlClient? = null
-    private var legacyButtons: PendingIntent? = null
     private var focusRequest: Any? = null
     private var legacyFocusListener: AudioManager.OnAudioFocusChangeListener? = null
     private var focusOwner: Any? = null
@@ -227,7 +224,7 @@ internal object CarPlayMediaKeys {
         focusRequest = request
         focusHeld = granted
         if (granted) forwardGrantedFocusLocked()
-        if (Build.VERSION.SDK_INT >= 21) session = MediaSession(context, "DiPlay CarPlay").apply {
+        session = MediaSession(context, "DiPlay CarPlay").apply {
             // API 21-25 routes hardware media keys only to sessions declaring these capabilities.
             @Suppress("DEPRECATION")
             setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
@@ -240,18 +237,6 @@ internal object CarPlayMediaKeys {
             setCallback(callback, mainHandler)
             setMetadata(androidMetadata(nowPlaying, shownArtworkLocked()))
             isActive = true
-        }
-        else {
-            val intent = Intent(Intent.ACTION_MEDIA_BUTTON).setComponent(ComponentName(context, LegacyMediaKeyReceiver::class.java))
-            val flags = if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
-            val buttons = PendingIntent.getBroadcast(context, 0, intent, flags)
-            legacyButtons = buttons
-            audio?.registerMediaButtonEventReceiver(buttons)
-            legacyClient = RemoteControlClient(buttons).also {
-                it.setTransportControlFlags(RemoteControlClient.FLAG_KEY_MEDIA_PLAY_PAUSE or
-                    RemoteControlClient.FLAG_KEY_MEDIA_NEXT or RemoteControlClient.FLAG_KEY_MEDIA_PREVIOUS)
-                audio?.registerRemoteControlClient(it)
-            }
         }
         Log.i(TAG, "media keys active focusGranted=$granted")
         if (OkavangoProfile.matches(Build.VERSION.SDK_INT, Build.MODEL, Build.HARDWARE, Build.DEVICE)) {
@@ -310,10 +295,6 @@ internal object CarPlayMediaKeys {
             @Suppress("DEPRECATION")
             appContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         }
-        legacyClient?.let { audio?.unregisterRemoteControlClient(it) }
-        legacyButtons?.let { audio?.unregisterMediaButtonEventReceiver(it) }
-        legacyClient = null
-        legacyButtons = null
         if (Build.VERSION.SDK_INT >= 26) focusRequest?.let { audio?.abandonAudioFocusRequest(it as AudioFocusRequest) }
         else legacyFocusListener?.let {
             @Suppress("DEPRECATION")
@@ -329,10 +310,6 @@ internal object CarPlayMediaKeys {
             nowPlaying.playing
         } else {
             mediaAudioActive
-        }
-        if (Build.VERSION.SDK_INT < 21) {
-            legacyClient?.setPlaybackState(if (playing) RemoteControlClient.PLAYSTATE_PLAYING else RemoteControlClient.PLAYSTATE_PAUSED)
-            return
         }
         session?.setPlaybackState(
             PlaybackState.Builder()
