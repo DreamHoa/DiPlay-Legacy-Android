@@ -218,6 +218,9 @@ internal object CarPlayMediaKeys {
         focusHeld = granted
         if (granted) forwardGrantedFocusLocked()
         if (Build.VERSION.SDK_INT >= 21) session = MediaSession(context, "DiPlay CarPlay").apply {
+            // API 21-25 routes hardware media keys only to sessions declaring these capabilities.
+            @Suppress("DEPRECATION")
+            setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
             setCallback(callback, mainHandler)
             setMetadata(androidMetadata(nowPlaying, shownArtworkLocked()))
             isActive = true

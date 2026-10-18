@@ -89,7 +89,18 @@ class Iap2WiredControlClient(
                     onProgress("iap2 wired startup timed out waiting for CarPlay availability")
                     return Iap2WiredControlResult(Iap2WiredControlTerminal.TIMED_OUT, stage, forwardedFrames, carPlayStartSessions)
                 }
-                val pollTimeout = vehicleStatus.pollTimeout(location.pollTimeout(minOf(remaining, startupRemaining)))
+                // Other iAP2 traffic does not prove the AirPlay data path is ready. Check this
+                // on every loop and cap recv itself so an idle read cannot postpone recovery.
+                val firstTcpPollTimeout = firstAirPlayPollTimeoutMillis(
+                    startSessionNanos, minOf(remaining, startupRemaining), airPlayTcpArrived(),
+                )
+                if (firstTcpPollTimeout == 0L) {
+                    onProgress("iap2 wired no AirPlay TCP ${WIRED_FIRST_TCP_MILLIS}ms after carplay-start-session")
+                    return Iap2WiredControlResult(
+                        Iap2WiredControlTerminal.NO_AIRPLAY_TCP, stage, forwardedFrames, carPlayStartSessions,
+                    )
+                }
+                val pollTimeout = vehicleStatus.pollTimeout(location.pollTimeout(firstTcpPollTimeout))
                 val incoming = try {
                     session.recv(pollTimeout)
                 } catch (failure: IOException) {
@@ -128,19 +139,6 @@ class Iap2WiredControlClient(
                         onProgress("iap2 wired peer silent for ${idleMs}ms; resetting link")
                         return Iap2WiredControlResult(
                             Iap2WiredControlTerminal.PEER_SILENT,
-                            stage,
-                            forwardedFrames,
-                            carPlayStartSessions,
-                        )
-                    }
-                    // Issue #95: iPhone alive on iAP2 but no AirPlay TCP — fail fast with a
-                    // clear message instead of idling until the USB stack wedges.
-                    if (carPlayStartSessions > 0 && !airPlayTcpArrived() &&
-                        System.nanoTime() - startSessionNanos >= WIRED_FIRST_TCP_MILLIS * NANOS_PER_MILLISECOND
-                    ) {
-                        onProgress("iap2 wired no AirPlay TCP ${WIRED_FIRST_TCP_MILLIS}ms after carplay-start-session")
-                        return Iap2WiredControlResult(
-                            Iap2WiredControlTerminal.NO_AIRPLAY_TCP,
                             stage,
                             forwardedFrames,
                             carPlayStartSessions,
@@ -202,6 +200,19 @@ class Iap2WiredControlClient(
         private const val PEER_SILENT_RESET_MILLIS = 90_000L
         /** No AirPlay TCP this long after StartSession: fail fast (issue #95). Mirrors wireless. */
         private const val WIRED_FIRST_TCP_MILLIS = 30_000L
+
+        /** Absolute first-TCP deadline: unrelated control frames never restart it. */
+        internal fun firstAirPlayPollTimeoutMillis(
+            startSessionNanos: Long,
+            requestedMillis: Long,
+            tcpArrived: Boolean,
+            nowNanos: Long = System.nanoTime(),
+        ): Long {
+            if (startSessionNanos == 0L || tcpArrived) return requestedMillis
+            val leftNanos = WIRED_FIRST_TCP_MILLIS * NANOS_PER_MILLISECOND - (nowNanos - startSessionNanos)
+            if (leftNanos <= 0L) return 0L
+            return minOf(requestedMillis, (leftNanos / NANOS_PER_MILLISECOND).coerceAtLeast(1L))
+        }
 
         /** Exact LIVI wired PowerSourceUpdate encoding: current and the charge-if-powered flag. */
         fun powerSourceUpdate(availableCurrentMilliAmps: Int): Iap2Frame =
