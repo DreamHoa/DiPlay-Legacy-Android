@@ -4693,7 +4693,9 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun saveSettingsAndReconnect() {
         if (!menuOpen) return
         if (!validateMfiSettings()) return
-        if (!validateManualHotspotSettings()) return
+        // Wired display/audio edits do not use the retained wireless profile. Its hidden, empty
+        // credentials must not block saving (the observed E01 defaults to EXISTING_WIFI).
+        if (wirelessEnabled && !validateManualHotspotSettings()) return
         persistMenuSettings()
         settingsBaseline = null
         finishSettingsMenu("Settings saved", reconnect = true)
