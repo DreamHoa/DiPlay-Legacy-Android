@@ -73,6 +73,16 @@ internal object CarPlayMediaKeys {
     private var artwork: Bitmap? = null
     private val artworkCache = LinkedHashMap<Int, Bitmap?>()
     private var placeholder: Bitmap? = null
+    private val geelyWheelKeys by lazy {
+        GeelyWheelKeys { index, key ->
+            val (current, context) = synchronized(this) {
+                (controller.takeIf { focusHeld && session != null }) to appContext
+            }
+            if (current != null && context != null && current.activeAirPlaySessionToken() != null && !inCall(context)) {
+                send(index, "Geely AIDL key=$key", expected = current)
+            }
+        }
+    }
 
     @Synchronized
     fun attach(context: Context, next: CarPlayController) {
@@ -244,6 +254,10 @@ internal object CarPlayMediaKeys {
             }
         }
         Log.i(TAG, "media keys active focusGranted=$granted")
+        if (OkavangoProfile.matches(Build.VERSION.SDK_INT, Build.MODEL, Build.HARDWARE, Build.DEVICE)) {
+            // Bind outside the media-key monitor; the vendor calls back synchronously over Binder.
+            mainHandler.post { geelyWheelKeys.ensureBound(context) }
+        }
     }
 
     private fun forwardGrantedFocusLocked() {
@@ -335,7 +349,10 @@ internal object CarPlayMediaKeys {
         )
     }
 
-    private fun send(index: Int, source: String) {
+    private fun send(index: Int, source: String, expected: CarPlayController? = null) {
+        if (expected != null && synchronized(this) {
+            controller !== expected || !focusHeld || session == null
+        }) return
         // While the car's video player is on screen the wheel drives it: a CarPlay play/pause would
         // make the iPhone end the video session.
         if (CarPlayVideo.onMediaKey(index)) {
@@ -348,7 +365,7 @@ internal object CarPlayMediaKeys {
 
     private val callback by lazy { if (Build.VERSION.SDK_INT >= 21) CarPlayMediaCallback(
         experimentalDiLink3Keys = { appContext?.let(BydOutputSettings::carPlayCallControls) == true },
-        send = ::send,
+        send = { index, source -> send(index, source) },
     ) else null }
 
     fun onLegacyMediaButton(intent: Intent) {
