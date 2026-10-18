@@ -39,6 +39,12 @@ android {
 
     }
 
+    // Keep only the default English strings and simplified Chinese in the APK, even
+    // when third-party Android libraries bundle translations for dozens of locales.
+    androidResources {
+        localeFilters += listOf("en", "zh-rCN")
+    }
+
 
     localAuthenticationAssets?.let { sourceSets.getByName("main").assets.srcDir(it) }
 
