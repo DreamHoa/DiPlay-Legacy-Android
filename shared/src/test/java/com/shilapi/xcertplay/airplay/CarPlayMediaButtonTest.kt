@@ -3,10 +3,27 @@ package com.shilapi.xcertplay.airplay
 import android.view.KeyEvent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CarPlayMediaButtonTest {
+    @Test
+    fun steeringWheelKeysMapToCarPlayMediaPresses() {
+        assertEquals(CarPlayMediaButton.NEXT, CarPlayMediaButton.forKeyCode(KeyEvent.KEYCODE_MEDIA_NEXT))
+        assertEquals(CarPlayMediaButton.PREVIOUS, CarPlayMediaButton.forKeyCode(KeyEvent.KEYCODE_MEDIA_PREVIOUS))
+        // BYD rewrites its play/pause key into PLAY or PAUSE from the session state; both toggle.
+        assertEquals(CarPlayMediaButton.PLAY_PAUSE, CarPlayMediaButton.forKeyCode(KeyEvent.KEYCODE_MEDIA_PLAY))
+        assertEquals(CarPlayMediaButton.PLAY_PAUSE, CarPlayMediaButton.forKeyCode(KeyEvent.KEYCODE_MEDIA_PAUSE))
+        assertEquals(CarPlayMediaButton.PLAY_PAUSE, CarPlayMediaButton.forKeyCode(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE))
+        assertEquals(CarPlayMediaButton.PLAY_PAUSE, CarPlayMediaButton.forKeyCode(KeyEvent.KEYCODE_HEADSETHOOK))
+        assertEquals(CarPlayMediaButton.PLAY_PAUSE, CarPlayMediaButton.forKeyCode(353))
+        // DiLink 3 (Han, GCC) sends KEYCODE_AUTO_MEDIA_PLAY_PAUSE unchanged.
+        assertNull(CarPlayMediaButton.forKeyCode(331))
+        assertEquals(CarPlayMediaButton.PLAY_PAUSE,
+            CarPlayMediaButton.forKeyCode(331, experimentalDiLink3Keys = true))
+    }
+
     @Test
     fun dilink3CarPlayVoiceKeysOpenSiriOnlyThroughTheWheelKeyService() {
         assertTrue(CarPlayMediaButton.opensSiriWhileCarPlay(327))
@@ -22,6 +39,13 @@ class CarPlayMediaButtonTest {
         assertTrue(CarPlayMediaButton.opensSiri(312))
         assertTrue(CarPlayMediaButton.opensSiri(KeyEvent.KEYCODE_VOICE_ASSIST))
         assertFalse(CarPlayMediaButton.opensSiri(KeyEvent.KEYCODE_MEDIA_NEXT))
+        assertNull(CarPlayMediaButton.forKeyCode(304))
+    }
+
+    @Test
+    fun otherKeysAreLeftToTheSystem() {
+        assertNull(CarPlayMediaButton.forKeyCode(KeyEvent.KEYCODE_VOLUME_UP))
+        assertNull(CarPlayMediaButton.forKeyCode(KeyEvent.KEYCODE_MEDIA_STOP))
     }
 
     @Test
