@@ -34,9 +34,6 @@
         </intent>
     </queries>
     <application>
-        <receiver android:name="com.shilapi.xcertplay.LegacyMediaKeyReceiver" android:exported="false">
-            <intent-filter><action android:name="android.intent.action.MEDIA_BUTTON" /></intent-filter>
-        </receiver>
         <provider
             android:name="com.shilapi.xcertplay.DiagnosticReportProvider"
             android:authorities="${applicationId}.diagnostic-reports"
