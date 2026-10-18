@@ -32,8 +32,7 @@ import com.shilapi.xcertplay.hud.BydOutputSettings
  * to map zoom until it is pressed again, or, in the timed behaviour, until a few seconds after the last
  * zoom. With the joystick setting on, the joystick key (BYD's media key by default) turns the joystick on
  * and off; while it is on the keys drive CarPlay's main screen as a car's rotary knob would (see
- * [WheelJoystick]). A call always keeps the keys for the call. During a CarPlay call the call key answers on
- * the iPhone (see [CarPlayCallKeys]), and with a CarPlay session DiLink 3's CarPlay voice keys open Siri.
+ * [WheelJoystick]). The service leaves other keys to the vehicle when no enabled role consumes them.
  * With the Siri key setting on, a key the user assigns opens Siri while CarPlay is connected.
  * Every other key passes on unchanged. On
  * the Tang the console's volume sends the same codes as the wheel's, so it zooms and moves too.
@@ -85,7 +84,6 @@ class WheelKeyService : AccessibilityService() {
 
     override fun onServiceConnected() {
         running = this
-        CarPlayCallKeys.install(this)
         refreshEligibility()
         handler.removeCallbacks(pollEligibility)
         handler.postDelayed(pollEligibility, ELIGIBILITY_POLL_MILLIS)
@@ -129,7 +127,6 @@ class WheelKeyService : AccessibilityService() {
             rearmTimedMode()
             return true
         }
-        if (CarPlayCallKeys.onKey(this, event.keyCode, down)) return true
         if (BydOutputSettings.carPlayCallControls(this) &&
             CarPlayMediaButton.opensSiriWhileCarPlay(event.keyCode) && session() != null) {
             if (!down) Log.i(TAG, "CarPlay voice key ${event.keyCode}: Siri sent=${CarPlayBackgroundSession.snapshot()?.controller?.requestSiri() == true}")
