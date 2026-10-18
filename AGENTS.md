@@ -1,68 +1,35 @@
-# AGENTS.md
+# DiPlay — Geely Okavango (Philippines, 2023)
 
-Instructions for coding agents that work on DiPlay.
+This repository's **`okavango-api22`** branch is for one verified Android head unit, not a general BYD/DiLink or multi-car project. See `README.md` / `README.zh-CN.md` for current status. Keep changes minimal and explain them to the user in Chinese.
 
-## Checks
+## Reference vehicle
 
-Run the CI command from `.github/workflows/android.yml` before you report a change as done:
+- Geely Okavango E01: Android **5.1 / API 22**, MT6735, device `VF12LQJ`.
+- Observed firmware: `SWVX11A0126H5173.00036`. Check `OkavangoProfile.matches` before invoking any vehicle-specific service.
+- Only **English** and **Simplified Chinese** app resources; the brand preset is **Geely** only.
+
+## Protect the proven paths
+
+- Wired CarPlay / USB / iAP2 / authorization already works on this vehicle. Do not rewrite the transport/authentication chain while cleaning unrelated code.
+- Steering-wheel next and previous were physically confirmed after commit `413812c`. The factory `com.neusoft.optimus.wheeljack.popview` service exposes the ECARX Binder callback; `GeelyWheelKeys.kt` maps **163 to NEXT** and **165 to PREVIOUS**, then forwards CarPlay HID. Preserve binder registration stability, duplicate suppression, and call/audio-focus/session checks.
+- Android standard `MEDIA_BUTTON` + `MediaSession` (including 87/88 input) is a **separate, retained path**. `413812c` was additive; do not remove the receiver, manifest entry, or API 22 callback based only on the AIDL path working.
+- Wireless CarPlay is **not verified on this Okavango**. Never treat another Geely E01's private Bluetooth daemon replacement, a Wi-Fi toggle, or a simulated test as on-car proof.
+
+## Cleanup boundaries
+
+- Android 4.4 `RemoteControlClient`, non-Geely brand images, non-English/Chinese translations, legacy demo apps and obsolete BYD-only call-key broadcast handling have been removed.
+- Legacy BYD HUD, instrument/cluster, and vehicle-state source is still interleaved with the app. The exact E01 profile skips BYD service startup; do not claim those source files are all gone. To remove the remaining classes, follow dependencies through the Android UI, `CarPlayController` and tests, then validate an installable APK.
+- Do not access root/system partitions, overwrite Bluetooth daemons, or send unverified vehicle commands as a side effect of cleanup.
+- Keep original upstream copyright notices and third-party license obligations; never commit MFi keys, certificates or signing identities.
+
+## Required checks
+
+GitHub Actions on `okavango-api22` runs:
 
 ```sh
-./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :home:testDebugUnitTest \
-  :mobile:lintDebug :home:lintDebug :maphost:lintDebug \
-  :mobile:assembleDebug :home:assembleDebug :maphost:assembleDebug
+./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :mobile:lintDebug --no-daemon
 ```
 
-Set `ANDROID_HOME` or `local.properties` if Gradle cannot find the SDK.
+Do **not** invoke `:home` or `:maphost`: those sample modules were deleted. The workflow then builds `:mobile:assembleStandaloneDebug` using separately provisioned GitHub repository secrets, validates Android 5.1 APK signing and uploads a short-lived private test artifact.
 
-## Adding or moving a setting
-
-The Settings screen is grouped by driver goal, not by implementation.
-`SettingsCategory`, `SettingsSection` and `SettingsInformationArchitecture` at the top of
-`common/src/main/java/com/shilapi/xcertplay/DiPlayActivity.kt` define the groups.
-`SettingsLayoutPolicyTest` fails when a section has no category or has more than one.
-
-### Choose the category
-
-Ask which goal the driver has when they look for the setting. Use the first row that fits.
-
-| Category | Put a setting here when it controls… | Examples |
-| --- | --- | --- |
-| Connection | how the iPhone connects and how DiPlay starts | connection setup, connect on open, start with the car, USB permissions, car hotspot automation, iPhone choice, Android permissions |
-| Display | how CarPlay looks on the head-unit screen | day/night mode, picture, size, resolution, frame rate, dock, system bars, multi-window resolution |
-| Audio | what the driver hears | media and navigation streams, music buffer |
-| Navigation | location and turn-by-turn guidance | location to iPhone, BYD HUD and cluster guidance |
-| Vehicle | how CarPlay fits this car and its driver | driving side, wheel keys (Siri, BYD joystick and map zoom), car button, gestures that conflict with the head unit |
-| Diagnostics | troubleshooting evidence | diagnostic reports |
-| Advanced | experimental, firmware-specific or risky behavior | dashboard map, split screen, screen rotation, side panel, HEVC video, audio focus, audio channel mapping, buffered music, vehicle data |
-| Overview | nothing new | see "Overview" below |
-
-A setting goes to Advanced when it is experimental, depends on specific firmware, or is an opt-in that can break sound, video or the connection on some head units.
-A control that fixes a common problem and is safe at its default (for example the audio stream choice) stays in its category.
-Exception: a gated control that only its own audience sees, and that completes an everyday goal, stays in that goal's category.
-Example: auto car hotspot needs ADB but appears only for car-hotspot users, so it is in Connection.
-
-Mark an experimental setting or card with the title suffix ` (experimental)`, never `· experimental`, a dash, or an `Experimental …` prefix.
-Each locale MUST use its existing form: `(تجريبي)`, `(experimental)`, `(экспериментально)`, `(експериментально)`, `（实验性）`, `（實驗性）`.
-
-### Add the code
-
-1. To extend an existing card, add the control inside the `filteredSection(...)` block of a card in the correct category.
-2. For a new card, add a `SettingsSection` entry and map it to exactly one category in `SettingsInformationArchitecture.sectionsByCategory`.
-3. Build the new card with `filteredSection(content, SettingsSection.X, …)` inside `allSettingsSections()`.
-   A plain `section(...)` call there MUST NOT be used: it renders on every category page.
-4. A setting MUST NOT appear in two categories.
-   Overview quick settings are the only duplicates. They MUST use the same persistence as the full control. Overview SHOULD NOT have more than four quick settings.
-5. If the change reconnects CarPlay or applies at the next connection, the description MUST say so.
-   A setting that only takes effect at the next connection MUST call `markReconnectNeeded()` after it saves.
-   This shows the "Reconnect now" bar. It MUST NOT drop a running session without the driver's consent.
-   Reconnect at once (`reconnectIfRunning()`) only after a dialog button that says "Apply and reconnect", or when the description says that the change reconnects CarPlay.
-6. Add each new string to `common/src/main/res/values/` and to every `values-xx` locale folder.
-   New Settings copy SHOULD use the `settings_` prefix. `SettingsTranslationsTest` fails when a `settings_*` string has no translation.
-7. A control that opens a choice uses `button()` with the text `"Title · Value"`.
-   That form renders as a setting row with the value and a chevron, and Search indexes the title.
-8. When you move a control between categories, update `AdaptiveSettingsUiTest.settingsLiveWhereDriversLookForThem`.
-
-### Overview
-
-Overview holds the connection status, links to the categories, quick settings, About and Language.
-Do not add a new setting to Overview. Add it to its category. Then promote it to quick settings only if drivers change it often.
+A source review, unit-test pass or green CI does **not** replace final in-car USB, audio, touch, previous/next and reconnection tests. Report what passed and what remains unverified; avoid accumulating device-specific hacks.
