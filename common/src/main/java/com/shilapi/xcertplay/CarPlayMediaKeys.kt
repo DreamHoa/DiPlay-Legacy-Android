@@ -221,6 +221,12 @@ internal object CarPlayMediaKeys {
             // API 21-25 routes hardware media keys only to sessions declaring these capabilities.
             @Suppress("DEPRECATION")
             setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
+            // The Geely E01 input service targets the framework-selected media-button receiver.
+            val keyIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
+                .setComponent(ComponentName(context, LegacyMediaKeyReceiver::class.java))
+            val keyFlags = PendingIntent.FLAG_UPDATE_CURRENT or
+                (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+            setMediaButtonReceiver(PendingIntent.getBroadcast(context, 0, keyIntent, keyFlags))
             setCallback(callback, mainHandler)
             setMetadata(androidMetadata(nowPlaying, shownArtworkLocked()))
             isActive = true
@@ -346,7 +352,9 @@ internal object CarPlayMediaKeys {
     ) else null }
 
     fun onLegacyMediaButton(intent: Intent) {
-        if (Build.VERSION.SDK_INT >= 21 || intent.action != Intent.ACTION_MEDIA_BUTTON) return
+        if (intent.action != Intent.ACTION_MEDIA_BUTTON) return
+        // API 21+ receiver is only a fallback for an active CarPlay media session.
+        if (Build.VERSION.SDK_INT >= 21 && synchronized(this) { session == null }) return
         val event = intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return
         if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return
         val index = CarPlayMediaButton.forKeyCode(event.keyCode) ?: return

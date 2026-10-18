@@ -1,5 +1,6 @@
 package com.shilapi.xcertplay
 
+import android.app.PendingIntent
 import android.content.Intent
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -81,6 +82,28 @@ class CarPlayMediaFocusForwardingTest {
             }
             verify(controller).sendMediaButton(CarPlayMediaButton.NEXT)
             verify(controller).sendMediaButton(CarPlayMediaButton.PREVIOUS)
+        }
+    }
+
+    @Test fun mediaButtonReceiverForwardsTrackKeysOnlyDuringAnActiveSession() {
+        val controller = mock(CarPlayController::class.java).also(controllers::add)
+        val sink = spy(AndroidMediaSink()).also(sinks::add)
+        mockConstruction(MediaSession::class.java).use { construction ->
+            start(controller, sink)
+            verify(construction.constructed().single())
+                .setMediaButtonReceiver(any(PendingIntent::class.java))
+            val receiver = LegacyMediaKeyReceiver()
+            fun button(key: Int, action: Int) = Intent(Intent.ACTION_MEDIA_BUTTON)
+                .putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(action, key))
+            receiver.onReceive(app, button(KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.ACTION_DOWN))
+            receiver.onReceive(app, button(KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.ACTION_UP))
+            receiver.onReceive(app, button(KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.ACTION_DOWN))
+            verify(controller).sendMediaButton(CarPlayMediaButton.NEXT)
+            verify(controller).sendMediaButton(CarPlayMediaButton.PREVIOUS)
+            CarPlayMediaKeys.detach(controller)
+            clearInvocations(controller)
+            receiver.onReceive(app, button(KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.ACTION_DOWN))
+            verify(controller, never()).sendMediaButton(anyInt())
         }
     }
 
