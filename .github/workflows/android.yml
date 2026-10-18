@@ -1,4 +1,4 @@
-name: Okavango API 22 build
+name: Okavango API 22 authenticated car-test APK
 
 on:
   push:
@@ -20,9 +20,11 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Check public source inputs
         run: |
           python3 -m unittest discover -s scripts/tests -p test_public_tree.py
@@ -35,36 +37,82 @@ jobs:
         with:
           packages: platform-tools platforms;android-37.0 build-tools;36.0.0 ndk;25.2.9519653
       - uses: gradle/actions/setup-gradle@v4
-      - name: Core unit tests, app lint, and source APK
+      - name: Core unit tests and app lint
         run: |
           chmod +x gradlew
-          ./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :mobile:lintDebug :mobile:assembleDebug --no-daemon
+          ./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :mobile:lintDebug --no-daemon
       - name: Optional full legacy and device-test suite
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_suite }}
         run: |
           ./gradlew :home:testDebugUnitTest :home:lintDebug :maphost:lintDebug :home:assembleDebug :maphost:assembleDebug :mobile:assembleDebugAndroidTest --no-daemon
-      - name: Verify source-only APK
+      - name: Provision MFi identity from repository Secrets
+        shell: bash
+        env:
+          MFI_KEY: ${{ secrets.DIPLAY_MFI_PK8_B64 }}
+          MFI_CERT: ${{ secrets.DIPLAY_MFI_P7B_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MFI_KEY" ] || [ -z "$MFI_CERT" ]; then
+            echo "::error::Missing DIPLAY_MFI_PK8_B64 or DIPLAY_MFI_P7B_B64 repository secret; cannot create a car-test APK."
+            exit 1
+          fi
+          umask 077
+          mkdir -p "$RUNNER_TEMP/okavango-assets/offline-mfi"
+          printf '%s' "$MFI_KEY" | base64 -d > "$RUNNER_TEMP/okavango-assets/offline-mfi/identity.pk8"
+          printf '%s' "$MFI_CERT" | base64 -d > "$RUNNER_TEMP/okavango-assets/offline-mfi/certificate.p7b"
+          test -s "$RUNNER_TEMP/okavango-assets/offline-mfi/identity.pk8"
+          test -s "$RUNNER_TEMP/okavango-assets/offline-mfi/certificate.p7b"
+          echo "MFi inputs provisioned. The standalone Gradle task validates key/certificate matching."
+      - name: Provision optional persistent Android debug signing
+        shell: bash
+        env:
+          DEBUG_KEYSTORE: ${{ secrets.OKAVANGO_DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -n "$DEBUG_KEYSTORE" ]; then
+            umask 077
+            mkdir -p "$HOME/.android"
+            printf '%s' "$DEBUG_KEYSTORE" | base64 -d > "$HOME/.android/debug.keystore"
+            keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey > /dev/null
+            echo "Stable Android debug signing configured."
+          else
+            echo "::notice::Using runner-generated debug signing; updating an older install may require uninstalling it. Configure OKAVANGO_DEBUG_KEYSTORE_B64 for future same-key updates."
+          fi
+      - name: Build authenticated standalone car-test APK
+        env:
+          DIPLAY_AUTH_ASSETS_DIR: ${{ runner.temp }}/okavango-assets
+        run: |
+          ./gradlew :mobile:assembleStandaloneDebug --no-daemon
+      - name: Verify CarPlay authentication assets and Android 5.1 APK signature
         shell: bash
         run: |
           set -euo pipefail
           apk=mobile/build/outputs/apk/debug/mobile-debug.apk
           test -s "$apk"
-          unzip -Z -1 "$apk" > "$RUNNER_TEMP/source-apk-contents.txt"
-          if grep -Eq '^assets/offline-mfi/(identity\.pk8|certificate\.p7b)$' "$RUNNER_TEMP/source-apk-contents.txt"; then
-            echo "::error::MFi material must never be present in the ordinary source APK."
-            exit 1
-          fi
-          mkdir -p handoff
-          cp "$apk" handoff/DiPlay-Okavango-source.apk
-          (cd handoff && sha256sum DiPlay-Okavango-source.apk > SHA256SUMS.txt)
-      - name: Downloadable source APK
+          unzip -Z -1 "$apk" > "$RUNNER_TEMP/apk-contents.txt"
+          for asset in identity.pk8 certificate.p7b; do
+            if ! grep -Fxq "assets/offline-mfi/$asset" "$RUNNER_TEMP/apk-contents.txt"; then
+              echo "::error::Missing offline MFi asset: $asset"
+              exit 1
+            fi
+          done
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" > "$RUNNER_TEMP/apk-badging.txt"
+          grep -Fq "package: name='com.shihab.diplay.okavango'" "$RUNNER_TEMP/apk-badging.txt"
+          grep -Fq "sdkVersion:'22'" "$RUNNER_TEMP/apk-badging.txt"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --min-sdk-version 22 --verbose "$apk" | tee "$RUNNER_TEMP/apk-signature.txt"
+          grep -Fq "Verified using v1 scheme (JAR signing): true" "$RUNNER_TEMP/apk-signature.txt"
+          mkdir -p "$RUNNER_TEMP/okavango-dist"
+          cp "$apk" "$RUNNER_TEMP/okavango-dist/DiPlay-Okavango-MFi.apk"
+          (cd "$RUNNER_TEMP/okavango-dist" && sha256sum DiPlay-Okavango-MFi.apk > SHA256SUMS.txt)
+          echo "::notice::This authenticated APK contains extractable MFi credentials; share only within the authorized test group."
+      - name: Upload authenticated car-test APK
         uses: actions/upload-artifact@v4
         with:
-          name: diplay-okavango-api22
-          path: handoff/
+          name: okavango-mfi-test
+          path: ${{ runner.temp }}/okavango-dist/
           if-no-files-found: error
           compression-level: 0
-          retention-days: 7
+          retention-days: 3
       - name: Test and lint reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -78,3 +126,11 @@ jobs:
             samples/home/build/reports/lint-results-debug.html
             samples/maphost/build/reports/lint-results-debug.html
           retention-days: 7
+      - name: Remove temporary authentication and signing inputs
+        if: always()
+        shell: bash
+        env:
+          DEBUG_KEYSTORE: ${{ secrets.OKAVANGO_DEBUG_KEYSTORE_B64 }}
+        run: |
+          rm -rf "$RUNNER_TEMP/okavango-assets" "$RUNNER_TEMP/okavango-dist"
+          if [ -n "$DEBUG_KEYSTORE" ]; then rm -f "$HOME/.android/debug.keystore"; fi
