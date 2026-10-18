@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       full_suite:
-        description: Also build/test sample apps and the Android device-test APK
+        description: Also build the Android device-test APK
         type: boolean
         default: false
 
@@ -44,7 +44,7 @@ jobs:
       - name: Optional full legacy and device-test suite
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_suite }}
         run: |
-          ./gradlew :home:testDebugUnitTest :home:lintDebug :maphost:lintDebug :home:assembleDebug :maphost:assembleDebug :mobile:assembleDebugAndroidTest --no-daemon
+          ./gradlew :mobile:assembleDebugAndroidTest --no-daemon
       - name: Provision MFi identity from repository Secrets
         shell: bash
         env:
@@ -121,10 +121,7 @@ jobs:
           path: |
             shared/build/reports/tests/
             common/build/reports/tests/
-            samples/home/build/reports/tests/
             mobile/build/reports/lint-results-debug.html
-            samples/home/build/reports/lint-results-debug.html
-            samples/maphost/build/reports/lint-results-debug.html
           retention-days: 7
       - name: Remove temporary authentication and signing inputs
         if: always()
