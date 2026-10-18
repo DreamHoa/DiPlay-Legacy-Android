@@ -122,7 +122,6 @@ import kotlin.math.roundToInt
 class CarPlayHostActivity : ComponentActivity() {
     private data class SettingsBaseline(
         val safeAreaRects: MutableMap<DisplaySize, SafeAreaRect?>,
-        val customIconBytes: ByteArray?,
     )
 
     private var connectionPanel: View? = null
@@ -249,30 +248,6 @@ class CarPlayHostActivity : ComponentActivity() {
             if (!menuOpen) requestStartupPrerequisites()
         }
 
-    private val imagePicker =
-        registerForActivityResult(ActivityResultContracts.GetContent(), ::cropSelectedImage)
-    private val imageDocumentPicker =
-        registerForActivityResult(ActivityResultContracts.OpenDocument(), ::cropSelectedImage)
-    private fun cropSelectedImage(uri: Uri?) {
-        if (uri == null) {
-            externalActivityInProgress = false
-            return
-        }
-        imageCrop.launch(
-            Intent(this, ImageCropActivity::class.java)
-                .setData(uri)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
-        )
-    }
-    private val imageCrop =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            externalActivityInProgress = false
-            if (result.resultCode == RESULT_OK) {
-                updateAirPlayIconPreview()
-                appendLog("Custom AirPlay icon updated")
-            }
-        }
-
     // The full-window viewport stays independent of the letterboxed SurfaceView dimensions.
     private var videoView: View? = null
     private var fallbackVideoView: SurfaceView? = null
@@ -314,8 +289,6 @@ class CarPlayHostActivity : ComponentActivity() {
     private var existingWifiFields: View? = null
     private var existingWifiErrorView: TextView? = null
     private var manualHotspotErrorView: TextView? = null
-    private var iconPreviewView: ImageView? = null
-    private var iconStatusView: TextView? = null
     private var safeAreaSummaryView: TextView? = null
     private var safeAreaEditor: View? = null
     private var safeAreaEditorView: SafeAreaEditorView? = null
@@ -1838,20 +1811,6 @@ class CarPlayHostActivity : ComponentActivity() {
             ).apply { topMargin = dp(36) },
         )
         content.addView(
-            buildIdentitySettingsSection(),
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(12) },
-        )
-        content.addView(
-            buildAirPlayIconSection(),
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(26) },
-        )
-        content.addView(
             buildDrivingSideSection(),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2239,17 +2198,10 @@ class CarPlayHostActivity : ComponentActivity() {
 
     private fun captureSettingsBaseline(): SettingsBaseline {
         val safeAreaSize = currentActivitySize()
-        val customIconBytes = try {
-            AirPlayPersistence.loadCustomAirPlayIconFile(this)?.readBytes()
-        } catch (error: Exception) {
-            Log.w(TAG, "Could not read the current AirPlay icon for settings rollback", error)
-            null
-        }
         return SettingsBaseline(
             safeAreaRects = mutableMapOf<DisplaySize, SafeAreaRect?>().apply {
                 safeAreaSize?.let { put(it, AirPlayPersistence.loadSafeAreaRect(this@CarPlayHostActivity, it.width, it.height)) }
             },
-            customIconBytes = customIconBytes,
         )
     }
 
@@ -2272,19 +2224,11 @@ class CarPlayHostActivity : ComponentActivity() {
                 commit = true,
             )
         }
-        try {
-            baseline.customIconBytes?.let { bytes ->
-                AirPlayPersistence.saveCustomAirPlayIcon(this, bytes)
-            } ?: AirPlayPersistence.clearCustomAirPlayIcon(this)
-        } catch (error: Exception) {
-            Log.w(TAG, "Could not restore the previous AirPlay icon", error)
-        }
         settingsBaseline = null
         locationPermissionAvailable = hasFineLocationPermission()
         hotspotStatus = HotspotStatus(state = if (wirelessEnabled) getString(R.string.hotspot_state_stopped) else getString(R.string.hotspot_state_off))
         syncMfiSettingsControls()
         updateManualHotspotFields()
-        updateAirPlayIconPreview()
         updateSafeAreaSummary()
         updateHotspotStatusBlock()
         updateResolutionMenu()
@@ -2446,43 +2390,6 @@ class CarPlayHostActivity : ComponentActivity() {
         MfiTarget.REMOTE -> getString(R.string.remote)
     }
 
-    private fun buildIdentitySettingsSection(): View {
-        val section = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        section.addView(
-            settingsInputRow(getString(R.string.manufacturer), manufacturer) { value ->
-                manufacturer = value
-                updateResolutionMenu()
-            },
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ),
-        )
-        section.addView(
-            settingsInputRow(getString(R.string.model), model) { value ->
-                model = value
-                updateResolutionMenu()
-            },
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(10) },
-        )
-        section.addView(
-            settingsInputRow(getString(R.string.oem_label), oemLabel) { value ->
-                oemLabel = value
-                updateResolutionMenu()
-            },
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(10) },
-        )
-        return section
-    }
-
     private fun settingsCategoryHeader(title: String): TextView =
         SettingsWidgets.createCategoryHeader(this, title, SettingsTheme.OVERLAY)
 
@@ -2636,140 +2543,6 @@ class CarPlayHostActivity : ComponentActivity() {
             ).apply { topMargin = dp(8) },
         )
         return section
-    }
-
-    private fun buildAirPlayIconSection(): View {
-        val section = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        section.addView(
-            menuText(getString(R.string.airplay_icon), 20f, MENU_SECONDARY),
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ),
-        )
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val preview = ImageView(this).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(8).toFloat()
-                setColor(MENU_TRACK_OFF)
-            }
-        }
-        row.addView(
-            preview,
-            LinearLayout.LayoutParams(dp(72), dp(72)),
-        )
-        val actions = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        actions.addView(
-            Button(this).apply {
-                text = getString(R.string.preset_brand_icons)
-                isAllCaps = false
-                setOnClickListener { showCarBrandPresetsDialog() }
-            },
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ),
-        )
-        actions.addView(
-            Button(this).apply {
-                text = getString(R.string.choose_image)
-                isAllCaps = false
-                setOnClickListener {
-                    externalActivityInProgress = true
-                    launchCarButtonImagePicker(
-                        openDocument = { imageDocumentPicker.launch(arrayOf("image/*")) },
-                        getContent = { imagePicker.launch("image/*") },
-                        documentPickerIsSystem = documentPickerIsSystem(),
-                    ).onFailure {
-                        externalActivityInProgress = false
-                        appendLog("No image picker: ${it.javaClass.simpleName}")
-                        android.widget.Toast.makeText(this@CarPlayHostActivity,
-                            getString(R.string.this_head_unit_has_no_image_picker),
-                            android.widget.Toast.LENGTH_LONG).show()
-                    }
-                }
-            },
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(8) },
-        )
-        actions.addView(
-            Button(this).apply {
-                text = getString(R.string.default_icon)
-                isAllCaps = false
-                setOnClickListener {
-                    AirPlayPersistence.clearCustomAirPlayIcon(this@CarPlayHostActivity)
-                    updateAirPlayIconPreview()
-                }
-            },
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(8) },
-        )
-        row.addView(
-            actions,
-            LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f,
-            ).apply { marginStart = dp(16) },
-        )
-        section.addView(
-            row,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(10) },
-        )
-        val status = menuText("", 14f, MENU_SECONDARY)
-        section.addView(
-            status,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(8) },
-        )
-        iconPreviewView = preview
-        iconStatusView = status
-        updateAirPlayIconPreview()
-        return section
-    }
-
-    private fun showCarBrandPresetsDialog() {
-        val presets = CarBrandPresets.ALL
-        val items = presets.map { it.displayName(this) }.toTypedArray()
-        android.app.AlertDialog.Builder(this)
-            .setTitle(getString(R.string.car_brand_presets_title))
-            .setItems(items) { _, which ->
-                val preset = presets[which]
-                val bytes = preset.loadBytes(this)
-                if (bytes != null) {
-                    AirPlayPersistence.saveCustomAirPlayIcon(this, bytes)
-                    val currentOem = AirPlayPersistence.loadOemLabel(this)
-                    if (currentOem.isBlank() || currentOem == AirPlayPersistence.DEFAULT_OEM_LABEL) {
-                        AirPlayPersistence.saveOemLabel(this, preset.defaultOemName)
-                    }
-                    updateAirPlayIconPreview()
-                    android.widget.Toast.makeText(
-                        this,
-                        getString(R.string.car_brand_icon_applied, preset.displayName(this)),
-                        android.widget.Toast.LENGTH_SHORT,
-                    ).show()
-                }
-            }
-            .setNegativeButton(getString(R.string.cancel), null)
-            .show()
     }
 
     // Between the driver's side and the bottom the dock moves at once (and is saved at once) when the
@@ -3741,13 +3514,11 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun loadAirPlayIcon(): AirPlayIcon {
-        val customBytes = AirPlayPersistence.loadCustomAirPlayIconBytes(this)
-        if (customBytes != null) {
-            decodeAirPlayIcon(customBytes)?.let { return it }
-            Log.w(TAG, "Custom AirPlay icon could not be decoded, falling back to default")
-        }
-        return decodeAirPlayIcon(defaultAirPlayIconBytes())
-            ?: throw IllegalStateException("Packaged AirPlay icon is invalid")
+        // No saved icon, brand selector, or fallback to an old car logo.
+        val png = GeelyCarIcon.loadBytes(this)
+            ?: throw IllegalStateException("Built-in Geely shield could not be rendered")
+        return decodeAirPlayIcon(png)
+            ?: throw IllegalStateException("Built-in Geely shield is not a valid square PNG")
     }
 
     private fun decodeAirPlayIcon(encoded: ByteArray): AirPlayIcon? {
@@ -3759,19 +3530,6 @@ class CarPlayHostActivity : ComponentActivity() {
             return null
         }
         return AirPlayIcon(bounds.outWidth, bounds.outHeight, encoded)
-    }
-
-    private fun defaultAirPlayIconBytes(): ByteArray =
-        // Shown in CarPlay's app list as the "back to the car" button.
-        resources.openRawResource(R.raw.ic_car_home).use { it.readBytes() }
-
-    private fun updateAirPlayIconPreview() {
-        val preview = iconPreviewView ?: return
-        val customBitmap = AirPlayPersistence.loadCustomAirPlayIconBitmap(this)
-        val bitmap = customBitmap ?: BitmapFactory.decodeResource(resources, R.raw.placeholder_icon)
-        preview.setImageBitmap(bitmap)
-        iconStatusView?.text =
-            if (customBitmap != null) getString(R.string.custom_1_1_icon) else getString(R.string.default_placeholder_icon)
     }
 
     private fun currentActivitySize(): DisplaySize? {

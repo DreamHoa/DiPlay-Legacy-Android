@@ -10,11 +10,9 @@ import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE)
-class CarBrandPresetsTest {
-    @Test fun onlyOkavangoGeelyPresetUsesValidVectorBackedPng() {
-        val preset = CarBrandPresets.ALL.single()
-        assertEquals("geely", preset.id)
-        val bytes = requireNotNull(preset.loadBytes(RuntimeEnvironment.getApplication()))
+class GeelyCarIconTest {
+    @Test fun builtInWordlessShieldProducesValidSquarePng() {
+        val bytes = requireNotNull(GeelyCarIcon.loadBytes(RuntimeEnvironment.getApplication()))
         assertTrue(bytes.size > 200)
         assertEquals(0x89, bytes[0].toInt() and 0xff)
         assertEquals(0x50, bytes[1].toInt() and 0xff)

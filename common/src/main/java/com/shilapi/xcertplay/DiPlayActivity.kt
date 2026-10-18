@@ -86,7 +86,6 @@ internal enum class SettingsSection {
     DISPLAY_AND_PERFORMANCE,
     EXPERIMENTAL_DISPLAY,
     ADVANCED_MEDIA,
-    CAR_BUTTON,
     AUDIO_ROUTING,
     LOCATION,
     CLUSTER_MAP,
@@ -111,7 +110,6 @@ internal object SettingsInformationArchitecture {
         SettingsCategory.VEHICLE to setOf(
             SettingsSection.CARPLAY_CONTROLS,
             SettingsSection.WHEEL_KEYS,
-            SettingsSection.CAR_BUTTON,
         ),
         SettingsCategory.DIAGNOSTICS to setOf(SettingsSection.DIAGNOSTICS),
         SettingsCategory.ADVANCED to setOf(
@@ -181,7 +179,6 @@ class DiPlayActivity : ComponentActivity() {
     private var vehicleProbeOutcome: BydVehicleProbeOutcome? = null
     private var adbCheckGeneration = 0
     private var adbStatus: TextView? = null
-    private var carButtonCard: LinearLayout? = null
     private var bydAdbControls: LinearLayout? = null
     private var adbSwitchChangePending = false
     private var pausedForAdbSwitchChange = false
@@ -237,16 +234,6 @@ class DiPlayActivity : ComponentActivity() {
             render()
             permissionHelp(getString(R.string.location), getString(R.string.allow_precise_location_for_diplay_in_the_head_unit_s_app_p))
         }
-    }
-    private val iconPicker = registerForActivityResult(ActivityResultContracts.GetContent(), ::cropIcon)
-    private val iconDocumentPicker = registerForActivityResult(ActivityResultContracts.OpenDocument(), ::cropIcon)
-    private fun cropIcon(uri: Uri?) {
-        if (uri != null) iconCrop.launch(Intent(this, ImageCropActivity::class.java).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-    }
-    private val iconCrop = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode != RESULT_OK) return@registerForActivityResult
-        refreshCarButton()
-        carButtonSaved()
     }
     private val export = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         if (uri != null) exportDiagnostics(uri)
@@ -495,7 +482,7 @@ class DiPlayActivity : ComponentActivity() {
         val restoreRailFocus = keepRailPosition &&
             (pendingRailFocus || settingsRailScroll?.hasFocus() == true)
         settingsRailScroll = null
-        status = null; connectButton = null; disconnectButton = null; lastRunning = null; carButtonCard = null
+        status = null; connectButton = null; disconnectButton = null; lastRunning = null
         reconnectBar = null
         readinessCard = null
         exportButton = null
@@ -1488,8 +1475,6 @@ class DiPlayActivity : ComponentActivity() {
                 reconnectIfRunning()
             }
         }
-        filteredSection(content, SettingsSection.CAR_BUTTON,
-            getString(R.string.car_button_in_carplay), R.drawable.ic_dp_car) { card -> carButtonCard = card; carButtonControls(card) }
         filteredSection(content, SettingsSection.AUDIO_ROUTING,
             getString(R.string.audio_routing), R.drawable.ic_dp_audio) { card ->
             mediaChannelControl(card)
@@ -3722,80 +3707,6 @@ class DiPlayActivity : ComponentActivity() {
             }
         }
         card.addView(label(getString(R.string.carplay_dock_hint), 14, MUTED).apply { setPadding(0, 0, 0, dp(18)) })
-    }
-
-    private fun carButtonControls(parent: LinearLayout) {
-        val custom = AirPlayPersistence.loadCustomAirPlayIconBitmap(this)
-        val preview = row().apply { gravity = Gravity.CENTER_VERTICAL }
-        preview.addView(ImageView(this).apply {
-            setImageBitmap(custom ?: BitmapFactory.decodeResource(resources, R.raw.ic_car_home))
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            background = rounded(SURFACE, BORDER)
-            if (Build.VERSION.SDK_INT >= 21) clipToOutline = true
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }, LinearLayout.LayoutParams(dp(72), dp(72)).apply { marginEnd = dp(16) })
-        val text = column()
-        text.addView(label(getString(R.string.car_button_icon), 18, TEXT, true))
-        text.addView(label(getString(if (custom != null) R.string.car_button_icon_custom else R.string.default_icon), 14, MUTED).apply { setPadding(0, dp(6), 0, 0) })
-        preview.addView(text, LinearLayout.LayoutParams(0, -2, 1f))
-        parent.addView(preview)
-        parent.addView(button(getString(R.string.preset_brand_icons), false) {
-            showCarBrandPresetsDialog()
-        }, matchButton(16, 60))
-        parent.addView(button(getString(R.string.choose_image), false) {
-            launchCarButtonImagePicker(
-                openDocument = { iconDocumentPicker.launch(arrayOf("image/*")) },
-                getContent = { iconPicker.launch("image/*") },
-                documentPickerIsSystem = documentPickerIsSystem(),
-            ).onFailure { toast(getString(R.string.this_head_unit_has_no_image_picker)) }
-        }, matchButton(10, 60))
-        if (custom != null) parent.addView(button(getString(R.string.default_icon), false) {
-            AirPlayPersistence.clearCustomAirPlayIcon(this)
-            refreshCarButton()
-            carButtonSaved()
-        }, matchButton(10, 60))
-        val name = AirPlayPersistence.loadOemLabel(this)
-        parent.addView(button("${getString(R.string.car_button_name)} · $name", false) {
-            textInput(getString(R.string.car_button_name), name, secret = false) {
-                AirPlayPersistence.saveOemLabel(this, it)
-                refreshCarButton()
-                carButtonSaved()
-            }
-        }, matchButton(10, 60))
-        parent.addView(label(getString(R.string.car_button_description), 14, MUTED).apply { setPadding(0, dp(12), 0, 0) })
-    }
-
-    private fun showCarBrandPresetsDialog() {
-        val presets = CarBrandPresets.ALL
-        val items = presets.map { it.displayName(this) }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle(getString(R.string.car_brand_presets_title))
-            .setItems(items) { _, which ->
-                val preset = presets[which]
-                val bytes = preset.loadBytes(this)
-                if (bytes != null) {
-                    AirPlayPersistence.saveCustomAirPlayIcon(this, bytes)
-                    AirPlayPersistence.saveOemLabel(this, preset.defaultOemName)
-                    refreshCarButton()
-                    carButtonSaved()
-                    toast(getString(R.string.car_brand_icon_applied, preset.displayName(this)))
-                }
-            }
-            .setNegativeButton(getString(R.string.cancel), null)
-            .show()
-    }
-
-    private fun carButtonSaved() {
-        markReconnectNeeded()
-        if (CarPlayBackgroundSession.hasSession()) toast(getString(R.string.car_button_saved_next_connection))
-    }
-
-    // Rebuilds only this card: render() would scroll the page back to the top.
-    private fun refreshCarButton() {
-        val card = carButtonCard ?: return
-        card.removeViews(1, card.childCount - 1)
-        carButtonControls(card)
-        normalizeSpacing(card)
     }
 
     private fun carPlaySizeControl(parent: LinearLayout) {

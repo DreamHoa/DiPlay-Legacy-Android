@@ -18,10 +18,6 @@ import com.shilapi.xcertplay.orchestration.MfiTarget
 import com.shilapi.xcertplay.orchestration.WirelessHotspotMode
 import com.shilapi.xcertplay.network.WifiP2pChannels
 import com.shilapi.xcertplay.transport.LockdownPairRecord
-import java.io.File
-import java.io.FileOutputStream
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 
 /** SharedPreferences persistence for the accessory identity and paired controllers. */
 object AirPlayPersistence {
@@ -107,7 +103,6 @@ object AirPlayPersistence {
     private const val KEY_REMOTE_MFI_TOKEN = "remote_mfi_token"
     private const val KEY_CUSTOM_BLUETOOTH_MAC = "custom_bluetooth_mac"
     private const val SAFE_AREA_KEY_PREFIX = "safe_area_"
-    private const val CUSTOM_ICON_FILE = "airplay-icon.png"
 
     const val DEFAULT_MANUFACTURER = "DiPlay"
     const val DEFAULT_MODEL = "DiPlay"
@@ -950,37 +945,6 @@ object AirPlayPersistence {
         val editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .remove(safeAreaKey(activityWidthPixels, activityHeightPixels))
         if (commit) editor.commit() else editor.apply()
-    }
-
-    fun loadCustomAirPlayIconFile(context: Context): File? =
-        File(context.filesDir, CUSTOM_ICON_FILE).takeIf { it.isFile }
-
-    fun loadCustomAirPlayIconBytes(context: Context): ByteArray? = try {
-        loadCustomAirPlayIconFile(context)?.readBytes()?.takeIf { it.isNotEmpty() }
-    } catch (_: Throwable) {
-        null
-    }
-
-    fun loadCustomAirPlayIconBitmap(context: Context): Bitmap? = try {
-        loadCustomAirPlayIconBytes(context)?.let { bytes ->
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        }
-    } catch (_: Throwable) {
-        null
-    }
-
-    fun saveCustomAirPlayIcon(context: Context, encodedImage: ByteArray) {
-        require(encodedImage.isNotEmpty()) { "AirPlay icon data must not be empty" }
-        val file = File(context.filesDir, CUSTOM_ICON_FILE)
-        FileOutputStream(file).use { output ->
-            output.write(encodedImage)
-            output.flush()
-            output.fd.sync()
-        }
-    }
-
-    fun clearCustomAirPlayIcon(context: Context) {
-        File(context.filesDir, CUSTOM_ICON_FILE).delete()
     }
 
     fun loadIdentity(context: Context): AirPlayIdentity {
