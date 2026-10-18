@@ -2340,11 +2340,6 @@ class CarPlayController(
                         CarPlayStatus.Failed("Wired CarPlay control timed out at ${result.stage}; StartSession sent=${result.carPlayStartSessionsSent}")
                     Iap2WiredControlTerminal.CHANNEL_CLOSED ->
                         CarPlayStatus.Failed("CarPlay control channel closed")
-                    // Issue #84/#61: the iPhone went quiet long after StartSession — the old
-                    // code spun here forever on "控制通道运行中". Fail loudly so the existing
-                    // reconnect path rebuilds the link instead.
-                    Iap2WiredControlTerminal.PEER_SILENT ->
-                        CarPlayStatus.Failed("Wired CarPlay peer silent; resetting link")
                     // Issue #95: iPhone alive on iAP2 but never opened the AirPlay TCP
                     // connection — fail fast instead of idling until USB wedges.
                     Iap2WiredControlTerminal.NO_AIRPLAY_TCP ->

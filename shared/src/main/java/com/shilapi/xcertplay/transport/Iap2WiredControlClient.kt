@@ -20,7 +20,6 @@ import java.net.InetAddress
 class Iap2WiredControlClient(
     private val session: Iap2Session,
     private val mfi: Iap2MfiAuthenticationClient,
-    private val peerSilentResetMillis: Long = PEER_SILENT_RESET_MILLIS,
     private val peerIdleDiagnosticMillis: Long = PEER_IDLE_DIAGNOSTIC_MILLIS,
 ) {
     fun run(
@@ -67,9 +66,9 @@ class Iap2WiredControlClient(
         var forwardedFrames = 0
         var carPlayStartSessions = 0
         var startSessionNanos = 0L
-        // Issue #84/#61: the live loop previously had no dead-link detection — once the
-        // iPhone went quiet, recv kept timing out and the UI sat on "控制通道运行中" forever.
-        val silenceMonitor = Iap2PeerSilenceMonitor(peerSilentResetMillis, peerIdleDiagnosticMillis)
+        // Quiet CSM traffic is diagnostic, not proof that the AirPlay session is dead.
+        // The Okavango's working wired session can go minutes without another CSM frame.
+        val silenceMonitor = Iap2PeerSilenceMonitor(peerIdleDiagnosticMillis)
         // Only the initial CarPlay availability handshake is time-bounded; live control stays open.
         val startupDeadlineNanos = System.nanoTime() + STARTUP_AVAILABILITY_TIMEOUT_MILLIS * NANOS_PER_MILLISECOND
         val location = Iap2LocationReporter(locationProvider, onProgress)
@@ -131,19 +130,9 @@ class Iap2WiredControlClient(
                             carPlayStartSessions,
                         )
                     }
-                    // Issue #84/#61: surface peer silence in the report, and stop spinning
-                    // forever once the iPhone is quiet long after StartSession was sent.
+                    // Keep reporting CSM inactivity without tearing down working video/audio.
+                    // Startup deadlines, channel closure and transport errors still recover.
                     silenceMonitor.diagnosticIfDue()?.let { onProgress(it) }
-                    if (carPlayStartSessions > 0 && silenceMonitor.shouldReset()) {
-                        val idleMs = silenceMonitor.idleMillis()
-                        onProgress("iap2 wired peer silent for ${idleMs}ms; resetting link")
-                        return Iap2WiredControlResult(
-                            Iap2WiredControlTerminal.PEER_SILENT,
-                            stage,
-                            forwardedFrames,
-                            carPlayStartSessions,
-                        )
-                    }
                     continue
                 }
                 silenceMonitor.onFrameReceived()
@@ -196,8 +185,6 @@ class Iap2WiredControlClient(
         private const val NANOS_PER_MILLISECOND = 1_000_000L
         /** Idle diagnostic cadence for a quiet iAP2 peer (issue #84/#61, Fix 0). */
         private const val PEER_IDLE_DIAGNOSTIC_MILLIS = 30_000L
-        /** Quiet long after StartSession: treat the link as dead and rebuild (issue #84/#61, Fix 1). */
-        private const val PEER_SILENT_RESET_MILLIS = 90_000L
         /** No AirPlay TCP this long after StartSession: fail fast (issue #95). Mirrors wireless. */
         private const val WIRED_FIRST_TCP_MILLIS = 30_000L
 
@@ -295,7 +282,7 @@ enum class Iap2WiredControlStage {
     CARPLAY_START_SENT,
 }
 
-enum class Iap2WiredControlTerminal { CHANNEL_CLOSED, TIMED_OUT, PEER_SILENT, NO_AIRPLAY_TCP }
+enum class Iap2WiredControlTerminal { CHANNEL_CLOSED, TIMED_OUT, NO_AIRPLAY_TCP }
 
 /** End state of the control loop only; it is not evidence of NCM or AirPlay availability. */
 data class Iap2WiredControlResult(

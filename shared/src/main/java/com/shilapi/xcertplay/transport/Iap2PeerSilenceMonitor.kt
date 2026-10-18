@@ -1,15 +1,13 @@
 package com.shilapi.xcertplay.transport
 
 /**
- * Tracks iAP2 peer silence on a live control loop (issue #84/#61).
+ * Reports CSM application inactivity on a live wired control loop.
  *
- * The wired live loop previously had no dead-link detection: once the iPhone went quiet,
- * `recv` kept timing out and the loop spun forever while the UI showed
- * "CarPlay 控制通道运行中". This monitor distinguishes "peer quiet" (diagnostic) from
- * "peer gone" (reset), with an injectable clock for tests.
+ * A working AirPlay session does not require periodic CSM messages. Inactivity alone
+ * must not disconnect it; real channel closure, transport errors and startup deadlines
+ * are handled by the caller. The injectable clock keeps diagnostics tests deterministic.
  */
 internal class Iap2PeerSilenceMonitor(
-    private val silentResetMillis: Long,
     private val diagnosticMillis: Long,
     private val nowNanos: () -> Long = System::nanoTime,
 ) {
@@ -34,6 +32,4 @@ internal class Iap2PeerSilenceMonitor(
         return "iap2 wired control idle idleMs=$idleMs (no iAP2 frame from iPhone)"
     }
 
-    /** True once the peer has been quiet for at least [silentResetMillis]. */
-    fun shouldReset(): Boolean = idleMillis() >= silentResetMillis
 }
