@@ -185,18 +185,18 @@ class AdaptiveSettingsUiTest {
         assertEquals(SettingsCategory.ADVANCED, ReflectionHelpers.getField<SettingsCategory>(advanced, "category"))
     }
 
-    @Test fun aRowBeforeAButtonKeepsTheGap() {
+    @Test fun vehicleSettingsNoLongerExposeBrandOrCustomImageControls() {
         val screen = openSettings()
         descendants(screen.window.decorView)
             .first { it.contentDescription == screen.getString(R.string.settings_open_category,
                 screen.getString(R.string.settings_vehicle)) }
             .performClick()
-        val chooseImage = texts(screen).single { it.text == screen.getString(R.string.choose_image) }
-        val card = chooseImage.parent as LinearLayout
-        val preview = card.getChildAt(card.indexOfChild(chooseImage) - 1)
-
-        assertEquals(Math.round(12 * screen.resources.displayMetrics.density),
-            (preview.layoutParams as LinearLayout.LayoutParams).bottomMargin)
+        val vehicle = texts(screen).map { it.text.toString() }
+        for (removed in listOf(R.string.car_button_in_carplay, R.string.preset_brand_icons,
+            R.string.choose_image, R.string.car_button_name)) {
+            assertFalse(screen.getString(removed), screen.getString(removed) in vehicle)
+        }
+        assertTrue(screen.getString(R.string.settings_wheel_keys) in vehicle)
     }
 
     @Test fun tappingAToggleRowChangesTheSetting() {
@@ -341,11 +341,11 @@ class AdaptiveSettingsUiTest {
             assertFalse(text(it), text(it) in audio)
         }
         assertTrue(text(R.string.right_hand_drive) in vehicle)
-        assertTrue(text(R.string.car_button_in_carplay) in vehicle)
+        assertFalse(text(R.string.car_button_in_carplay) in vehicle)
         assertTrue(text(R.string.wheel_siri_key) in vehicle)
         assertTrue(text(R.string.settings_wheel_keys) in vehicle)
         assertTrue(text(R.string.side_panel) in advanced)
-        listOf(R.string.main_buffered_audio, R.string.efficient_video, R.string.smooth_video, R.string.settings_direct_surface_view, R.string.call_echo_cancellation, R.string.call_voice_filter, R.string.right_hand_drive, R.string.car_button_in_carplay,
+        listOf(R.string.main_buffered_audio, R.string.efficient_video, R.string.smooth_video, R.string.settings_direct_surface_view, R.string.call_echo_cancellation, R.string.call_voice_filter, R.string.right_hand_drive,
             R.string.side_panel, R.string.split_screen_areas, R.string.carplay_rotation).forEach {
             assertFalse(text(it), text(it) in display)
         }
