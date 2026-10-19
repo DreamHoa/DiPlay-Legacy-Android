@@ -18,7 +18,7 @@ import okhttp3.OkUrlFactory
 
 /** GitHub-only updates with a domestic HTTPS mirror for release assets. */
 internal object DiPlayUpdateClient {
-    private const val REPO = "programmerguohuajing/DiPlay-Legacy-Android"
+    private const val REPO = "DreamHoa/DiPlay-Legacy-Android"
     private const val LATEST_URL = "https://api.github.com/repos/$REPO/releases/latest"
     private const val MAX_METADATA = 512 * 1024
     private const val MAX_DIGEST_FILE = 2 * 1024
@@ -70,7 +70,7 @@ internal object DiPlayUpdateClient {
         val feedUrl = "https://github.com/$REPO/releases.atom"
         val entry = DiPlayAtomSource.newest(readText(feedUrl, MAX_METADATA), installed)
             ?: return null
-        val apk = "DiPlay-${entry.tag}-legacy-release.apk"
+        val apk = "DiPlay-${entry.tag}-okavango-release.apk"
         val url = "https://github.com/$REPO/releases/download/${entry.tag}/$apk"
         val head = connect(url, method = "HEAD")
         val size = try {
@@ -90,7 +90,7 @@ internal object DiPlayUpdateClient {
         if (root.optBoolean("draft") || root.optBoolean("prerelease")) return null
         val tag = root.optString("tag_name")
         if (!newerVersion(tag, installed)) return null
-        val apk = "DiPlay-$tag-legacy-release.apk"
+        val apk = "DiPlay-$tag-okavango-release.apk"
         val prefix = "https://github.com/$REPO/releases/download/$tag/"
         val assets = root.getJSONArray("assets")
         var apkUrl: String? = null
@@ -118,7 +118,7 @@ internal object DiPlayUpdateClient {
     /** Prefer domestic relay for canonical GitHub release assets, not release metadata. */
     internal fun downloadCandidates(url: String): List<String> {
         val canonical = "https://github.com/$REPO/releases/download/"
-        return if (url.startsWith(canonical)) listOf("https://ghproxy.net/$url", url)
+        return if (url.startsWith(canonical)) listOf(url)
         else listOf(url)
     }
 
@@ -313,11 +313,7 @@ internal object DiPlayUpdateClient {
             if (candidate.protocol != "https" || !approvedHost) {
                 throw IOException("Untrusted update redirect")
             }
-            var connection = if (android.os.Build.VERSION.SDK_INT < 22) {
-                legacyHttp.open(candidate) as HttpsURLConnection
-            } else {
-                candidate.openConnection() as HttpsURLConnection
-            }
+            var connection = candidate.openConnection() as HttpsURLConnection
             configureRequest(connection, method)
             val status = try {
                 connection.responseCode
@@ -326,7 +322,7 @@ internal object DiPlayUpdateClient {
                 // OEM Android 5+ frameworks can also expose an SSLv3-only
                 // TLS fallback; retry that exact failure with bundled Conscrypt.
                 // Do not retry certificate, hostname, or other handshake errors.
-                if (android.os.Build.VERSION.SDK_INT < 22 || !isObsoleteSslv3Failure(failure)) {
+                if (!isObsoleteSslv3Failure(failure)) {
                     throw failure
                 }
                 android.util.Log.w("DiPlayUpdate", "System TLS offered only SSLv3; retrying TLS 1.2")

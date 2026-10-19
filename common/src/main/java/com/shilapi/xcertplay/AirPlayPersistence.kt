@@ -190,10 +190,10 @@ object AirPlayPersistence {
     }
 
     fun loadNavigationStreamType(context: Context): Int {
-        val defaultStream = if (CarHotspotSetup.isBydHeadUnit(context)) 14 else android.media.AudioManager.STREAM_MUSIC
+        val defaultStream = android.media.AudioManager.STREAM_MUSIC
         val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getInt(KEY_NAVIGATION_STREAM_TYPE, defaultStream)
-        return if (!CarHotspotSetup.isBydHeadUnit(context) && saved == 14) {
+        return if (saved == 14) {
             android.media.AudioManager.STREAM_MUSIC
         } else {
             saved
@@ -712,7 +712,7 @@ object AirPlayPersistence {
     fun loadClusterContent(context: Context): CarPlayClusterDisplay.Content =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_CLUSTER_CONTENT, null)
             ?.let { name -> CarPlayClusterDisplay.Content.entries.firstOrNull { it.name == name } }
-            ?: if (AdbClusterRouter.enabled(context)) CarPlayClusterDisplay.Content.INSTRUMENTS else CarPlayClusterDisplay.Content.MAP
+            ?: CarPlayClusterDisplay.Content.MAP
 
     fun saveClusterContent(context: Context, content: CarPlayClusterDisplay.Content) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_CLUSTER_CONTENT, content.name).apply()

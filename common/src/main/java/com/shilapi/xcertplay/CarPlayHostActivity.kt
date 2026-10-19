@@ -167,9 +167,9 @@ class CarPlayHostActivity : ComponentActivity() {
             hardwareVersion = "1.0",
             carPlayUsbInterfaceNumber = 3,
             locationInformationEnabled = locationReportingEnabled,
-            vehicleStatusEnabled = com.shilapi.xcertplay.hud.BydOutputSettings.batteryToIphoneActive(this),
-            chargingConnectors = com.shilapi.xcertplay.hud.BydOutputSettings.chargingConnectors(this),
-            vehicleSpeedEnabled = locationReportingEnabled && com.shilapi.xcertplay.hud.BydOutputSettings.wheelSpeedToIphoneActive(this),
+            vehicleStatusEnabled = false,
+            chargingConnectors = com.shilapi.xcertplay.transport.EvChargingConnectors.CCS2_TYPE2,
+            vehicleSpeedEnabled = false,
         ),
         label = "DiPlay",
         hostName = "diplay-" + DiPlayBootstrap.deviceId(airPlayIdentity).replace(":", "").lowercase(),
@@ -306,23 +306,9 @@ class CarPlayHostActivity : ComponentActivity() {
     )
     private val currentSurface: Surface? get() = videoSurfaceOwner.current
     private var currentSurfaceTexture: SurfaceTexture? = null
-    private var clusterPresentation: ClusterMapPresentation? = null
-    private var clusterSurface: Surface? = null
-    private var clusterMonitor: DiLink51ClusterMonitor? = null
-    private var detectedCluster = ClusterActivityState.Snapshot(null, false)
-    // Keep one surface per layer alive, including while its map card is hidden.
-    private val clusterLayers = mutableMapOf<Boolean, ClusterMapPresentation>()
-    private var clusterTurnGuidance: com.shilapi.xcertplay.hud.ClusterTurnGuidance? = null
-    private val clusterTurnOverlayListener: (com.shilapi.xcertplay.hud.ClusterTurnGuidance?) -> Unit = { guidance ->
-        runOnUiThread {
-            clusterTurnGuidance = guidance
-            applyClusterTurnOverlay()
-        }
-    }
     // Copies of stream 111 outside the dashboard (centre card, launcher maps) each get their own decoder.
     private val mirrorSink: (String, Surface?) -> Unit = { key, surface -> sink?.setMirrorSurface(SCREEN_TYPE_ALT, key, surface) }
     private val mirrorsChanged: () -> Unit = {
-        updateClusterMapShown()
         if (MapMirrors.launcherShowsMap) CenterMapOverlay.hide()
     }
     // With Usage Access the card shows only over a home screen; null = not known (no monitor).
@@ -413,7 +399,6 @@ class CarPlayHostActivity : ComponentActivity() {
             onNightChanged = { night ->
                 darkMode = night
                 paintWaitingScreen()
-                applyClusterTurnOverlay()
                 appendLog("CarPlay switched to ${if (night) "night" else "day"} mode")
                 logThemeState(nightModeDiagnosticSource, resources.configuration)
                 syncAirPlayDarkMode(nightModeDiagnosticSource)
@@ -440,24 +425,11 @@ class CarPlayHostActivity : ComponentActivity() {
     private val shuttingDown = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     private var sidePanel: LinearLayout? = null
-    private var sidePanelBattery: TextView? = null
     private var sidePanelShown = false
-    private val sidePanelTick = object : Runnable {
-        override fun run() {
-            refreshSidePanel()
-            if (sidePanelShown) mainHandler.postDelayed(this, SIDE_PANEL_REFRESH_MILLIS)
-        }
-    }
     private val teardownExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val airPlayCommandExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val logLines = ArrayDeque<LogEntry>()
     private val expireOldLogLines = Runnable { refreshLogView(System.currentTimeMillis()) }
-    private val refreshTurnOverlay = object : Runnable {
-        override fun run() {
-            com.shilapi.xcertplay.hud.BydNavigationOutputs.refreshTurnOverlay()
-            mainHandler.postDelayed(this, 1_000L)
-        }
-    }
     // Some head units (e.g. BYD DiLink) update resources.configuration for day/night
     // without delivering onConfigurationChanged, so poll while the activity is visible.
     private val pollConfiguration = object : Runnable {
@@ -564,7 +536,6 @@ class CarPlayHostActivity : ComponentActivity() {
                 @Suppress("DEPRECATION")
                 getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
             }
-            displayManager?.registerDisplayListener(clusterDisplayListener, mainHandler)
         }
         initializeSessionLog()
         installCrashDiagnostics()
@@ -877,20 +848,8 @@ class CarPlayHostActivity : ComponentActivity() {
         advancedAudioChannelMapping =
             advancedAudioChannelMappingSupported &&
                 AirPlayPersistence.loadAdvancedAudioChannelMapping(this)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP &&
-            DiLink51ClusterLayout.automatic(this) && clusterMonitor == null) {
-            clusterMonitor = DiLink51ClusterMonitor(this, ::onClusterActivityState).also { it.start() }
-        } else if (!DiLink51ClusterLayout.automatic(this)) {
-            clusterMonitor?.stop()
-            clusterMonitor = null
-        }
         if (!menuOpen) gestureFingerCount = AirPlayPersistence.loadSettingsGestureFingers(this)
         settingsGestureHint?.text = getString(R.string.open_diplay_settings_hint, gestureFingerCount)
-        ensureClusterPresentation()
-        AirPlayPersistence.overlaySettingsListener = { runOnUiThread { applyClusterTurnOverlay() } }
-        com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(clusterTurnOverlayListener)
-        mainHandler.removeCallbacks(refreshTurnOverlay)
-        mainHandler.post(refreshTurnOverlay)
         var systemBarsChanged = false
         if (!menuOpen) {
             val savedHideTopBar = AirPlayPersistence.loadHideTopBar(this)
@@ -915,256 +874,15 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
 
-    // Experimental: the CarPlay instrument-cluster stream on the BYD cluster projection display.
-    private fun effectiveClusterTheme(): DiLink51ClusterLayout.Theme =
-        if (DiLink51ClusterLayout.automatic(this)) detectedCluster.theme ?: DiLink51ClusterLayout.theme(this)
-        else DiLink51ClusterLayout.theme(this)
-
-    private fun onClusterActivityState(state: ClusterActivityState.Snapshot) {
-        if (state != detectedCluster) appendLog("Cluster map: detected theme=${state.theme} mapVisible=${state.mapVisible}")
-        detectedCluster = state
-        if (!AirPlayPersistence.loadClusterMapEnabled(this)) { dismissClusterPresentation(); return }
-        ensureClusterPresentation()
-    }
-
-    private fun ensureClusterPresentation() {
-        if (!AirPlayPersistence.loadClusterMapEnabled(this)) {
-            dismissClusterPresentation()
-            return
-        }
-        if (AdbClusterRouter.enabled(this)) {
-            ClusterActivityOutput.bind(this, taskId) { onClusterSurface(it) }
-            ClusterActivityOutput.setStreamActive(SCREEN_TYPE_ALT in activeScreenStreamTypes)
-            applyClusterTurnOverlay()
-            runCatching { ClusterActivityOutput.ensure(this) }.onFailure {
-                appendLog("Cluster activity: launch failed ${it.javaClass.simpleName}: ${it.message}")
-            }
-            return
-        }
-        ClusterActivityOutput.stop(this)
-        val theme = effectiveClusterTheme()
-        if (DiLink51ClusterLayout.supported()) {
-            ensureDiLink51ClusterPresentation(theme)
-            return
-        }
-        if (clusterPresentation != null) return
-        val display = ClusterMapPresentation.findDisplay(this, theme) ?: run {
-            appendLog("Cluster map: no cluster projection display among ${ClusterMapPresentation.describeDisplays(this)}")
-            return
-        }
-        val presentation = ClusterMapPresentation(this, display, theme) { surface -> runOnUiThread { onClusterSurface(surface) } }
-        // The system dismisses a presentation when its display goes away; allow a new one on resume.
-        presentation.setOnDismissListener {
-            if (clusterPresentation === presentation) {
-                clusterPresentation = null
-                com.shilapi.xcertplay.hud.BydNavigationOutputs.setClusterMapShown(false)
-                updateClusterMapShown()
-            }
-        }
-        try {
-            presentation.show()
-            clusterPresentation = presentation
-            updateClusterMapShown()
-            presentation.setStreamActive(SCREEN_TYPE_ALT in activeScreenStreamTypes)
-            applyClusterTurnOverlay()
-            Log.i(ClusterMapPresentation.TAG, "cluster presentation shown display=${display.displayId} name=${display.name}")
-            appendLog("Cluster map: presentation shown display=${display.displayId} name=${display.name}")
-        } catch (error: RuntimeException) {
-            Log.w(ClusterMapPresentation.TAG, "cluster presentation failed", error)
-            appendLog("Cluster map: presentation failed ${error.javaClass.simpleName}: ${error.message}")
-        }
-    }
-
-    private fun ensureDiLink51ClusterPresentation(theme: DiLink51ClusterLayout.Theme) {
-        val fullMap = theme == DiLink51ClusterLayout.Theme.MAP
-        val visible = !DiLink51ClusterLayout.automatic(this) || detectedCluster.mapVisible
-        clusterLayers.filterKeys { it != fullMap }.values.forEach { it.setMapVisible(false) }
-        var target = clusterLayers[fullMap]
-        if (target == null) {
-            val display = ClusterMapPresentation.findDisplay(this, theme) ?: return
-            lateinit var presentation: ClusterMapPresentation
-            presentation = ClusterMapPresentation(this, display, theme) { surface ->
-                runOnUiThread {
-                    if (clusterPresentation === presentation) onClusterSurface(surface)
-                }
-            }
-            presentation.setOnDismissListener {
-                if (clusterLayers[fullMap] === presentation) clusterLayers.remove(fullMap)
-                if (clusterPresentation === presentation) clusterPresentation = null
-                updateClusterMapShown()
-            }
-            try {
-                presentation.setMapVisible(false)
-                clusterPresentation = presentation
-                clusterLayers[fullMap] = presentation
-                presentation.show()
-                appendLog("Cluster map: retained layer display=${display.displayId} fullMap=$fullMap")
-                target = presentation
-            } catch (error: RuntimeException) {
-                clusterLayers.remove(fullMap)
-                clusterPresentation = null
-                appendLog("Cluster map: presentation failed ${error.javaClass.simpleName}: ${error.message}")
-                return
-            }
-        }
-        clusterPresentation = target
-        target.outputSurface?.let(::onClusterSurface)
-        target.setStreamActive(SCREEN_TYPE_ALT in activeScreenStreamTypes)
-        target.setMapVisible(visible)
-        updateClusterMapShown()
-        applyClusterTurnOverlay()
-    }
-
-    private fun applyClusterTurnOverlay() {
-        val overlay = CarPlayClusterDisplay.usesCustomTurnCard(AirPlayPersistence.loadClusterContent(this))
-        ClusterActivityOutput.setTurnCard(if (overlay) clusterTurnGuidance else null,
-            AirPlayPersistence.loadClusterTurnCardOverlayXPercent(this),
-            AirPlayPersistence.loadClusterTurnCardOverlayYPercent(this),
-            AirPlayPersistence.loadClusterTurnCardOverlaySizePercent(this),
-            AirPlayPersistence.loadClusterTurnCardOpacityPercent(this), darkMode)
-        val presentations = (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
-        for (presentation in presentations) {
-            presentation.setTurnCardOverlay(
-                AirPlayPersistence.loadClusterTurnCardOverlayXPercent(this),
-                AirPlayPersistence.loadClusterTurnCardOverlayYPercent(this),
-                AirPlayPersistence.loadClusterTurnCardOverlaySizePercent(this),
-            )
-            presentation.setTurnCardOpacity(AirPlayPersistence.loadClusterTurnCardOpacityPercent(this))
-            presentation.setTurnCardNightMode(darkMode)
-            presentation.setTurnCardGuidance(if (overlay) clusterTurnGuidance else null)
-        }
-    }
-
-    private fun dismissClusterPresentation() {
-        ClusterActivityOutput.stop(this)
-        val presentations = (clusterLayers.values + listOfNotNull(clusterPresentation)).distinct()
-        clusterLayers.clear()
-        clusterPresentation = null
-        clusterSurface?.let { sink?.clearSurface(SCREEN_TYPE_ALT, it) }
-        clusterSurface = null
-        presentations.forEach { runCatching { it.dismiss() } }
-        com.shilapi.xcertplay.hud.BydNavigationOutputs.setClusterMapShown(false)
-        controller?.setDashboardMapOutputVisible(false)
-    }
-
-    private fun onClusterSurface(surface: Surface?) {
-        if (clusterSurface === surface) return
-        // A direct handoff lets MediaCodec.setOutputSurface preserve its reference frames.
-        // Clearing first would destroy the decoder and can leave stream 111 waiting for an IDR.
-        if ((!DiLink51ClusterLayout.supported() && !AdbClusterRouter.enabled(this)) || surface == null) {
-            clusterSurface?.let { old -> sink?.clearSurface(SCREEN_TYPE_ALT, old) }
-        }
-        clusterSurface = surface
-        // Never fall back to the main surface: two decoders must not draw into one Surface.
-        if (surface != null) {
-            if (AdbClusterRouter.enabled(this) && ClusterActivityOutput.hasConfirmedRoute() &&
-                !adbClusterConfigured && controller != null) {
-                ClusterActivityOutput.setStreamActive(false)
-                reconnectAfterLoss("DiLink 4 cluster confirmed; requesting its native stream")
-            } else sink?.setSurface(SCREEN_TYPE_ALT, surface)
-        }
-        updateClusterMapShown()
-    }
-
-    private var adbClusterConfigured = false
-    // Whether the running session's cluster stream was sized for a physical cluster display.
-    private var clusterStreamOnDisplay = false
-
-    // DiLink 3 creates its cluster display only after DiPlay first projects to the cluster, which can
-    // finish after the session has already asked for the virtual fallback stream.
-    private val clusterDisplayListener = object : android.hardware.display.DisplayManager.DisplayListener {
-        override fun onDisplayAdded(displayId: Int) {
-            if (isDestroyed || !AirPlayPersistence.loadClusterMapEnabled(this@CarPlayHostActivity)) return
-            val display = ClusterMapPresentation.findDisplay(this@CarPlayHostActivity, effectiveClusterTheme())
-            if (display?.displayId != displayId) return
-            appendLog("Cluster map: display ${display.name} appeared")
-            ensureClusterPresentation()
-            if (controller != null && !clusterStreamOnDisplay) {
-                reconnectAfterLoss("Cluster display appeared; requesting its stream")
-            }
-        }
-        override fun onDisplayRemoved(displayId: Int) = Unit
-        override fun onDisplayChanged(displayId: Int) = Unit
-    }
-
+    // Optional virtual map stream for a launcher card. This head unit has no supported instrument display.
     private fun clusterDisplayConfig(): AirPlayDisplayConfig? {
-        adbClusterConfigured = false
-        clusterStreamOnDisplay = false
         if (!AirPlayPersistence.loadClusterMapEnabled(this)) return null
-        if (AdbClusterRouter.enabled(this) && ClusterActivityOutput.hasConfirmedRoute()) {
-            adbClusterConfigured = true
-            clusterStreamOnDisplay = true
-            return DiLink4ClusterDisplay.streamConfig(AirPlayPersistence.loadClusterContent(this),
-                AirPlayPersistence.loadClusterMarkerHorizontalStep(this),
-                AirPlayPersistence.loadClusterMarkerVerticalStep(this),
-                AirPlayPersistence.loadClusterSafeAreaRect(this)).also {
-                MapMirrors.streamAspect = it.widthPixels.toDouble() / it.heightPixels
-                appendLog("Cluster activity: requesting stream 111 at ${it.widthPixels}x${it.heightPixels}; safeArea=${it.safeArea} drawOutside=${it.safeAreaDrawOutside}; ADB task routing")
-            }
-        }
-        val theme = effectiveClusterTheme()
-        val display = ClusterMapPresentation.findDisplay(this, theme)
-        if (display != null) {
-            val size = ClusterMapPresentation.sizeOf(display)
-            if (size.x > 0 && size.y > 0) {
-                clusterStreamOnDisplay = true
-                if (DiLink51ClusterLayout.supported()) {
-                    val plan = DiLink51ClusterLayout.plan(size.x, size.y, theme) ?: return null
-                    return DiLink51ClusterLayout.streamConfig().also {
-                        MapMirrors.streamAspect = it.widthPixels.toDouble() / it.heightPixels
-                        appendLog("Cluster map: fixed 1920x720 stream; layout=$theme viewport=$plan")
-                    }
-                }
-                if (DiLink4ClusterDisplay.matches(display.name, size.x, size.y)) {
-                    return DiLink4ClusterDisplay.streamConfig(
-                        AirPlayPersistence.loadClusterContent(this),
-                        AirPlayPersistence.loadClusterMarkerHorizontalStep(this),
-                        AirPlayPersistence.loadClusterMarkerVerticalStep(this),
-                        AirPlayPersistence.loadClusterSafeAreaRect(this),
-                    ).also { MapMirrors.streamAspect = it.widthPixels.toDouble() / it.heightPixels }
-                }
-                val requestedScale = AirPlayPersistence.loadClusterMapScalePercent(this)
-                fun streamAt(scale: Int) = CarPlayClusterDisplay.config(
-                    size.x,
-                    size.y,
-                    scale,
-                    AirPlayPersistence.loadClusterMarkerHorizontalStep(this),
-                    AirPlayPersistence.loadClusterMarkerVerticalStep(this),
-                    AirPlayPersistence.loadClusterContent(this),
-                )
-                val requested = streamAt(requestedScale)
-                // The smaller-map preset enlarges the encoded canvas beyond this panel. Probe
-                // the same selected hardware decoder as the main-screen enlargement guard.
-                val effective = if (requestedScale > 100) {
-                    val support = largerCanvasSupport(requested)
-                    appendLog("Cluster map: ${support.details}")
-                    if (support.supported) requested else {
-                        val native = streamAt(100)
-                        val fallback = if (largerCanvasSupport(native).supported) 100
-                            else CarPlayClusterDisplay.STREAM_SCALE_PERCENT
-                        AirPlayPersistence.saveClusterMapScalePercent(this, fallback)
-                        appendLog("Cluster map: scale $requestedScale% refused (${support.reason}); using $fallback%")
-                        streamAt(fallback)
-                    }
-                } else requested
-                return effective.also {
-                    MapMirrors.streamAspect = it.widthPixels.toDouble() / it.heightPixels
-                    appendLog("Cluster map: requesting ${it.widthPixels}x${it.heightPixels} on ${size.x}x${size.y} safeArea=${it.safeArea} url=${it.initialUrl}")
-                }
-            }
-        }
-        // Fallback for head units without physical cluster projection (e.g. DiLink 3.0/3.5 without digital cluster):
-        // Provide standard virtual cluster stream (1280x720, 16:9 aspect) for CenterMapOverlay and MapEmbedService.
         MapMirrors.streamAspect = MapMirrors.VIRTUAL_STREAM_ASPECT
         return CarPlayClusterDisplay.config(
-            widthPixels = 1280,
-            heightPixels = 720,
-            scalePercent = 100,
+            widthPixels = 1280, heightPixels = 720, scalePercent = 100,
             content = AirPlayPersistence.loadClusterContent(this),
             baseSafeArea = CarPlayClusterDisplay.VIRTUAL_SAFE_AREA_PERCENT,
-        ).also {
-            appendLog("Cluster map: requesting virtual ${it.widthPixels}x${it.heightPixels} (16:9) stream for launcher/center card")
-        }
+        )
     }
 
     // Hardware navigation belongs to the iPhone-rendered CarPlay UI, not Android View focus.
@@ -1302,19 +1020,6 @@ class CarPlayHostActivity : ComponentActivity() {
         appendLog(if (surface != null) "Centre map: mirroring the dashboard stream" else "Centre map: mirror stopped")
     }
 
-    // The dashboard map pause must not stop the stream while a copy of the map is on screen.
-    private fun updateClusterMapShown() {
-        com.shilapi.xcertplay.hud.BydNavigationOutputs.setClusterMapShown((clusterPresentation != null ||
-            (ClusterActivityOutput.hasConfirmedRoute() && clusterSurface != null)) && !MapMirrors.any)
-        // Wheel zoom needs a physical map; centre-screen copies must not suppress that eligibility.
-        val surface = clusterSurface?.takeIf { it.isValid }
-        val presentation = clusterPresentation
-        val presented = surface != null && presentation?.isShowing == true && presentation.mapVisible &&
-            presentation.outputSurface === surface
-        val direct = surface != null && adbClusterConfigured && ClusterActivityOutput.hasConfirmedRoute()
-        controller?.setDashboardMapOutputVisible(presented || direct)
-    }
-
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         refreshConfiguration(newConfig, ThemeModeDiagnostics.Source.CALLBACK)
@@ -1343,10 +1048,7 @@ class CarPlayHostActivity : ComponentActivity() {
         pictureBinding = null
         removeVideoSurfaceProbe()
         fallbackVideoView?.holder?.removeCallback(fallbackSurfaceCallback)
-        mainHandler.removeCallbacks(refreshTurnOverlay)
         AirPlayPersistence.overlaySettingsListener = null
-        com.shilapi.xcertplay.hud.BydNavigationOutputs.setTurnOverlayListener(null)
-        if (Build.VERSION.SDK_INT >= 21) clusterMonitor?.stop()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
             val displayManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 getSystemService(android.hardware.display.DisplayManager::class.java)
@@ -1354,7 +1056,6 @@ class CarPlayHostActivity : ComponentActivity() {
                 @Suppress("DEPRECATION")
                 getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
             }
-            displayManager?.unregisterDisplayListener(clusterDisplayListener)
         }
         mainHandler.removeCallbacks(hideIdleCenterMap)
         homeMonitor?.stop()
@@ -1365,7 +1066,6 @@ class CarPlayHostActivity : ComponentActivity() {
             MapMirrors.setStreamActive(false)
         }
         if (MapMirrors.onChanged === mirrorsChanged) MapMirrors.onChanged = null
-        dismissClusterPresentation()
         mainHandler.removeCallbacks(applyDisplaySize)
         mainHandler.removeCallbacks(expireOldLogLines)
         mainHandler.removeCallbacks(pollConfiguration)
@@ -1579,13 +1279,6 @@ class CarPlayHostActivity : ComponentActivity() {
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
         })
-        sidePanelBattery = TextView(this).apply {
-            textSize = 30f
-            setTextColor(Color.rgb(200, 200, 205))
-            gravity = Gravity.CENTER
-            setPadding(0, dp(24), 0, dp(32))
-        }
-        panel.addView(sidePanelBattery)
         panel.addView(Button(this).apply {
             text = getString(R.string.side_panel_full_screen)
             textSize = 22f
@@ -1624,25 +1317,15 @@ class CarPlayHostActivity : ComponentActivity() {
         areas.use(target)
         sidePanelShown = show
         sidePanel?.visibility = if (show) View.VISIBLE else View.GONE
-        mainHandler.removeCallbacks(sidePanelTick)
-        if (show) sidePanelTick.run()
         updateVideoLayout(view.width, view.height)
     }
 
     private fun resetSidePanel() {
         sidePanelShown = false
         sidePanel?.visibility = View.GONE
-        mainHandler.removeCallbacks(sidePanelTick)
     }
 
     // The battery shows only where DiPlay already reads it for the iPhone.
-    private fun refreshSidePanel() {
-        val battery = if (com.shilapi.xcertplay.hud.BydOutputSettings.batteryToIphoneActive(this)) {
-            com.shilapi.xcertplay.hud.BydNavigationOutputs.batteryStatus(applicationContext).snapshot()
-        } else null
-        sidePanelBattery?.text = battery?.let { "🔋 ${Math.round(it.batteryPercent)} %  ·  ${it.rangeKm} km" }.orEmpty()
-    }
-
     private fun buildSettingsMenu(): View {
         val overlay = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
@@ -3508,7 +3191,7 @@ class CarPlayHostActivity : ComponentActivity() {
             model = normalizedModel(),
             oemLabel = oemLabel,
             icons = listOf(loadAirPlayIcon()),
-            videoInCar = com.shilapi.xcertplay.hud.BydOutputSettings.videoWhileParkedActive(this),
+            videoInCar = false,
             mainBufferedAudio = AirPlayPersistence.loadMainBufferedAudio(this),
         )
     }
@@ -3739,7 +3422,6 @@ class CarPlayHostActivity : ComponentActivity() {
                         return@runOnUiThread
                     }
                     activeScreenStreamTypes.clear()
-                    ClusterActivityOutput.setStreamActive(false)
                     setConnectionStage(getString(R.string.carplay_session_ended_reconnecting))
                     appendLog("AirPlay session ended; reconnecting from scratch")
                     reconnectAfterLoss("AirPlay session ended")
@@ -3755,7 +3437,6 @@ class CarPlayHostActivity : ComponentActivity() {
                         return@runOnUiThread
                     }
                     activeScreenStreamTypes.clear()
-                    ClusterActivityOutput.setStreamActive(false)
                     setConnectionStage(getString(R.string.transport_error_reconnecting))
                     appendLog("CarPlay transport error: $message; reconnecting from scratch")
                     reconnectAfterLoss("CarPlay transport error: $message")
@@ -3827,19 +3508,12 @@ class CarPlayHostActivity : ComponentActivity() {
             return false
         }
         displayDiagnosticAttempt = DisplayDiagnosticSnapshot.currentAttempt(this)
-        adbClusterConfigured = AdbClusterRouter.enabled(this) && snapshot.controller.configuredClusterSize() ==
-            (DiLink4ClusterDisplay.STREAM_WIDTH to DiLink4ClusterDisplay.STREAM_HEIGHT)
-        controller = snapshot.controller
-        updateClusterMapShown()
-        sink = snapshot.sink
-        sessionDisplay = snapshot.display
         resetSidePanel()
         if (snapshot.display.viewAreas?.let { it.kindOf(it.current) == CarPlayViewAreas.Kind.SIDE_PANEL } == true) {
             // The live stream can outlast its Activity. Restore the Android view covering its
             // unused strip instead of leaving a blank third when a new host adopts the session.
             sidePanelShown = true
             sidePanel?.visibility = View.VISIBLE
-            sidePanelTick.run()
         }
         MapMirrors.reapply()
         CarPlayBackgroundSession.store(snapshot.controller, snapshot.sink, snapshot.width, snapshot.height,
@@ -3910,14 +3584,7 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         val airPlayConfig = createAirPlayConfig(effectiveSize)
         val locationProvider: Iap2LocationProvider? =
-            when {
-                !config.locationReportingEnabled -> null
-                config.identification.vehicleSpeedEnabled -> VehicleSpeedLocationProvider(
-                    AndroidCarPlayLocationProvider(this),
-                    com.shilapi.xcertplay.hud.BydNavigationOutputs.wheelSpeed(applicationContext),
-                )
-                else -> AndroidCarPlayLocationProvider(this)
-            }
+            if (config.locationReportingEnabled) AndroidCarPlayLocationProvider(this) else null
         appendLog(
             "Starting CarPlay controller at ${size.width}x${size.height} -> " +
                 "${airPlayConfig.main.widthPixels}x${airPlayConfig.main.heightPixels} " +
@@ -3949,7 +3616,6 @@ class CarPlayHostActivity : ComponentActivity() {
         )
         sink = renderer
         currentSurface?.let(::attachSurface)
-        clusterSurface?.let { renderer.setSurface(SCREEN_TYPE_ALT, it) }
         MapMirrors.reapply()
         val media = createMediaEngine(renderer)
         val pairings = AirPlayPersistence.loadPairings(this) { id, key ->
@@ -3968,15 +3634,10 @@ class CarPlayHostActivity : ComponentActivity() {
             savePairRecord = { record -> AirPlayPersistence.saveLockdownRecord(this, record) },
             clearPairRecord = { AirPlayPersistence.clearLockdownRecord(this) },
             locationProvider = locationProvider,
-            vehicleStatusProvider = if (com.shilapi.xcertplay.hud.BydOutputSettings.batteryToIphoneActive(this)) {
-                com.shilapi.xcertplay.hud.BydNavigationOutputs.batteryStatus(applicationContext)
-            } else {
-                null
-            },
+            vehicleStatusProvider = null,
         )
         controller = next
         resetSidePanel() // a new session starts without the side panel
-        updateClusterMapShown()
         CarPlayMediaKeys.attach(this, next)
         if (airPlayConfig.videoInCar) CarPlayVideo.attach(this, next)
         val display = CarPlaySessionDisplay(
@@ -4345,7 +4006,6 @@ class CarPlayHostActivity : ComponentActivity() {
         startupRetryButton?.visibility = View.GONE
         appendLog(reason)
         activeScreenStreamTypes.clear()
-        ClusterActivityOutput.setStreamActive(false)
         setConnectionStage(reason)
         Log.i(TAG, "$reason; rebuilding stack at ${size.width}x${size.height}")
         val generation = ++restartGeneration
@@ -4626,11 +4286,7 @@ class CarPlayHostActivity : ComponentActivity() {
 
     private fun attachSurface(surface: Surface) {
         sink?.setSurface(SCREEN_TYPE_MAIN, surface)
-        if (AirPlayPersistence.loadClusterMapEnabled(this)) {
-            clusterSurface?.let { sink?.setSurface(SCREEN_TYPE_ALT, it) }
-        } else {
-            sink?.setSurface(SCREEN_TYPE_ALT, surface)
-        }
+        if (!AirPlayPersistence.loadClusterMapEnabled(this)) sink?.setSurface(SCREEN_TYPE_ALT, surface)
     }
 
     private fun onHostTouch(view: View, event: MotionEvent): Boolean {
@@ -4730,10 +4386,7 @@ class CarPlayHostActivity : ComponentActivity() {
             }
             appendLog("Screen stream state: type=$type active=$active generation=$generation")
             if (type == SCREEN_TYPE_ALT) {
-                Log.i(ClusterMapPresentation.TAG, "cluster stream active=$active")
                 appendLog("Cluster map: stream active=$active")
-                clusterPresentation?.setStreamActive(active)
-                ClusterActivityOutput.setStreamActive(active)
                 MapMirrors.setStreamActive(active)
                 if (active) {
                     mainHandler.removeCallbacks(hideIdleCenterMap)
@@ -5002,7 +4655,6 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private companion object {
-        const val SIDE_PANEL_REFRESH_MILLIS = 5_000L
         const val TAG = "xcertplay-usb"
         const val SCREEN_TYPE_MAIN = 110
         const val SCREEN_TYPE_ALT = 111

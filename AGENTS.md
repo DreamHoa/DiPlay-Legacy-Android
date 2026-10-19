@@ -1,6 +1,6 @@
 # DiPlay — Geely Okavango (Philippines, 2023)
 
-This repository's **`okavango-api22`** branch is for one verified Android head unit, not a general BYD/DiLink or multi-car project. See `README.md` / `README.zh-CN.md` for current status. Keep changes minimal and explain them to the user in Chinese.
+This repository's **`main`** branch is for one verified Android head unit, not a general BYD/DiLink or multi-car project. See `README.md` / `README.zh-CN.md` for current status. Keep changes minimal and explain them to the user in Chinese.
 
 ## Reference vehicle
 
@@ -18,18 +18,18 @@ This repository's **`okavango-api22`** branch is for one verified Android head u
 ## Cleanup boundaries
 
 - Android 4.4 `RemoteControlClient`, non-Geely brand images, non-English/Chinese translations, legacy demo apps and obsolete BYD-only call-key broadcast handling have been removed.
-- Legacy BYD HUD, instrument/cluster, and vehicle-state source is still interleaved with the app. The exact E01 profile skips BYD service startup; do not claim those source files are all gone. To remove the remaining classes, follow dependencies through the Android UI, `CarPlayController` and tests, then validate an installable APK.
+- BYD HUD, instrument-display routing and vehicle-data probes/writers have been deleted. Generic phone navigation/now-playing decoding and call state live in `shared/.../navigation`; do not reintroduce vendor workers.
 - Do not access root/system partitions, overwrite Bluetooth daemons, or send unverified vehicle commands as a side effect of cleanup.
 - Keep original upstream copyright notices and third-party license obligations; never commit MFi keys, certificates or signing identities.
 
 ## Required checks
 
-GitHub Actions on `okavango-api22` runs:
+GitHub Actions on `main` runs:
 
 ```sh
 ./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :mobile:lintDebug --no-daemon
 ```
 
-Do **not** invoke `:home` or `:maphost`: those sample modules were deleted. The workflow then builds `:mobile:assembleStandaloneDebug` using separately provisioned GitHub repository secrets, validates Android 5.1 APK signing and uploads a short-lived private test artifact.
+Do **not** invoke `:home` or `:maphost`: those modules were deleted. Also compile `:mobile:assembleDebug` for source verification. The workflow then builds `:mobile:assembleStandaloneRelease` only with the fixed signing and authentication Secrets, verifies the actual API22 APK and uploads an installable artifact. No random-signed car APK is distributed. See `docs/RELEASE_SIGNING.md`. Releases are created as drafts because authenticated APKs contain extractable credentials.
 
 A source review, unit-test pass or green CI does **not** replace final in-car USB, audio, touch, previous/next and reconnection tests. Report what passed and what remains unverified; avoid accumulating device-specific hacks.

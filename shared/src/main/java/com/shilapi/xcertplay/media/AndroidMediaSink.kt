@@ -1104,7 +1104,7 @@ private class VideoDecoder(
         )
         if (index < 0) { recover("video decoder input stalled"); return }
         @Suppress("DEPRECATION")
-        val input = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) codec.getInputBuffer(index) else codec.inputBuffers[index]
+        val input = codec.getInputBuffer(index)
         checkNotNull(input) { "Decoder input buffer unavailable" }
         input.clear()
         if (annexB.size <= input.remaining()) {
@@ -1183,7 +1183,7 @@ private class VideoDecoder(
                         stats.onPacingDelay(delay.nanos)
                         localNs + delay.nanos
                     } else 0L
-                    if (Build.VERSION.SDK_INT >= 21 && targetNs - now in 1..MAX_PACING_AHEAD_NS) {
+                    if (targetNs - now in 1..MAX_PACING_AHEAD_NS) {
                         codec.releaseOutputBuffer(index, targetNs)
                     } else {
                         if (shown && delay != null && !heldOverGap && !pauseHeld) stats.onLate()
@@ -1481,7 +1481,7 @@ private class AudioRenderer(
         val selection = mappedSelection()
         mappedChannel = selection.channel
         val streamOverride = channelOverride(selection.channel)
-        var attributes: Any? = if (Build.VERSION.SDK_INT >= 21) audioAttributesFor(selection, streamOverride) else null
+        var attributes: Any? = audioAttributesFor(selection, streamOverride)
         trackAttributes = attributes
         val plan = MediaAudioBuffer.plan(selection.channel == AudioChannel.MEDIA,
             format.sampleRate, format.channels, minBuffer, mediaBufferMillis)
@@ -1490,7 +1490,7 @@ private class AudioRenderer(
         var routeLabel: String
         diagnosticStage = "track-build"
         if (streamOverride == 0) {
-            attributes = if (Build.VERSION.SDK_INT >= 21) audioAttributesFor(selection) else null
+            attributes = audioAttributesFor(selection)
             routeLabel = "usage"
             built = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 AudioTrack.Builder()
@@ -1533,7 +1533,7 @@ private class AudioRenderer(
                     diagnosticStage = "track-fallback-build"
                     routeLabel = "streamType=$streamType(fallback=usage)"
                     Log.w(TAG, "streamType=$streamType rejected by this ROM; falling back to usage-based track")
-                    attributes = if (Build.VERSION.SDK_INT >= 21) audioAttributesFor(selection) else null
+                    attributes = audioAttributesFor(selection)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         AudioTrack.Builder()
                             .setAudioAttributes(checkNotNull(attributes) as AudioAttributes)
@@ -1805,11 +1805,7 @@ private class AudioRenderer(
             return
         }
         @Suppress("DEPRECATION")
-        val input = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            codec.getInputBuffer(index)
-        } else {
-            codec.inputBuffers[index]
-        } ?: return
+        val input = codec.getInputBuffer(index) ?: return
         input.clear()
         if (payload.size <= input.remaining()) {
             input.put(payload)
@@ -1866,11 +1862,7 @@ private class AudioRenderer(
                     }
                     if (size > 0) {
                         @Suppress("DEPRECATION")
-                        val output = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                            codec.getOutputBuffer(index)
-                        } else {
-                            codec.outputBuffers[index]
-                        }
+                        val output = codec.getOutputBuffer(index)
                         if (output != null) {
                             if (size > pcm.size) pcm = ByteArray(size)
                             output.position(info.offset)

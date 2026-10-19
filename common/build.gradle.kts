@@ -9,7 +9,7 @@ android {
     }
 
     defaultConfig {
-        minSdk = 19
+        minSdk = 22
         multiDexEnabled = true
     }
 

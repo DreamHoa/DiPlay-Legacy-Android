@@ -44,7 +44,7 @@ internal class HomeScreenMonitor(context: Context, private val onChange: (Boolea
         foregroundListener = listener
 
         // UsageStatsManager poller fallback
-        if (Build.VERSION.SDK_INT >= 21 && DiLink51ClusterMonitor.hasAccess(context)) {
+        if (hasAccess(context)) {
             since = System.currentTimeMillis() - FIRST_LOOK_BACK_MILLIS
             newestTime = 0L
             newestPackage = null
@@ -77,7 +77,6 @@ internal class HomeScreenMonitor(context: Context, private val onChange: (Boolea
 
     private fun poll() {
         val now = System.currentTimeMillis()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return
         val usageManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             context.getSystemService(UsageStatsManager::class.java)
         } else {
@@ -115,7 +114,7 @@ internal class HomeScreenMonitor(context: Context, private val onChange: (Boolea
         }
 
         // BYD's home list (Launcher3 HomeHelper): MyCar, the normal home, and the map home.
-        val HOME_PACKAGES = setOf("com.android.launcher3", "com.byd.launchermap", "com.byd.naviauto", "com.byd.mycar")
+        val HOME_PACKAGES = setOf("com.android.launcher3")
 
         // Known third-party car launchers
         val KNOWN_CAR_LAUNCHERS = setOf(
@@ -124,7 +123,6 @@ internal class HomeScreenMonitor(context: Context, private val onChange: (Boolea
             "com.dy.launcher",            // 迪友桌面 (部分渠道)
             "com.king.dyzm",              // 迪友桌面
             "com.king.diyou",
-            "com.byd.diyou",
             "com.dudu.android.launcher",  // 嘟嘟桌面
             "com.dudu.android.launcher.mini",
             "com.tencent.autolauncher",   // 腾讯车联
@@ -132,7 +130,10 @@ internal class HomeScreenMonitor(context: Context, private val onChange: (Boolea
         )
 
         // Accessibility alone is not a foreground source: this PR has no service dispatching events.
-        fun hasAccess(context: Context): Boolean = Build.VERSION.SDK_INT >= 21 && DiLink51ClusterMonitor.hasAccess(context)
+        fun hasAccess(context: Context): Boolean =
+            (context.getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager)
+                .checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(), context.packageName) == android.app.AppOpsManager.MODE_ALLOWED
 
         /** Query all launcher packages declared on the system. */
         fun queryHomePackages(context: Context): Set<String> {

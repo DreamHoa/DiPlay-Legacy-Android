@@ -31,10 +31,9 @@ android {
         minSdk = 22
         targetSdk = 37
         multiDexEnabled = true
-        multiDexKeepProguard = file("multidex-config.pro")
-        testInstrumentationRunner = "com.shilapi.xcertplay.T3LegacyInstrumentation"
-        versionCode = 71
-        versionName = "0.2.46-okavango.5"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        versionCode = 72
+        versionName = "0.3.0"
         ndk { abiFilters += setOf("arm64-v8a", "armeabi-v7a") }
 
     }
@@ -50,20 +49,19 @@ android {
 
     signingConfigs {
         create("release") {
-            val localKeystore = rootProject.file("release-signing.jks").takeIf { it.isFile }
-                ?: rootProject.file("release-signing.keystore").takeIf { it.isFile }
             storeFile = providers.environmentVariable("ANDROID_KEYSTORE_PATH")
-                .orNull?.let { file(it) } ?: localKeystore ?: file("missing-release-keystore.jks")
-            val hasLocal = localKeystore != null
-            storePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orElse(if (hasLocal) "diplay123456" else "").get()
-            keyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").orElse(if (hasLocal) "diplay" else "").get()
-            keyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").orElse(if (hasLocal) "diplay123456" else "").get()
+                .orNull?.let { file(it) } ?: file("missing-okavango-keystore.p12")
+            storePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").getOrElse("android")
+            keyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").getOrElse("androiddebugkey")
+            keyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").getOrElse("android")
+            enableV1Signing = true // Android 5.1 does not understand APK Signature Scheme v2.
+            enableV2Signing = true
         }
     }
 
     buildTypes {
         debug {
-            // Separate installation preserves the original app and its phone pairings.
+            // Both variants keep the Okavango package ID; distributed APKs use the fixed release signer.
             applicationIdSuffix = null
             versionNameSuffix = null
         }
@@ -100,7 +98,6 @@ dependencies {
     coreLibraryDesugaring(libs.desugar.jdk.libs)
     implementation(project(":common"))
     implementation(project(":shared"))
-    implementation("androidx.multidex:multidex:2.0.1")
     androidTestImplementation("androidx.test:runner:1.5.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     authenticationProbeRuntime(libs.bouncycastle)
@@ -109,15 +106,17 @@ dependencies {
 
 abstract class VerifyDiPlaySigningTask : DefaultTask() {
     @get:org.gradle.api.tasks.Internal abstract val keyStoreFile: RegularFileProperty
-    @get:Input abstract val keyStorePassword: Property<String>
+    @get:org.gradle.api.tasks.Internal abstract val keyStorePassword: Property<String>
     @get:Input abstract val keyAlias: Property<String>
-    @get:Input abstract val keyPassword: Property<String>
+    @get:org.gradle.api.tasks.Internal abstract val keyPassword: Property<String>
+
+    @get:InputFile abstract val expectedCertificate: RegularFileProperty
 
     @TaskAction fun verify() {
         val keyFile = keyStoreFile.orNull?.asFile
         check(keyFile?.isFile == true && keyStorePassword.get().isNotBlank() &&
             keyAlias.get().isNotBlank() && keyPassword.get().isNotBlank()) {
-            "Release requires the original DiPlay signing keystore and explicit ANDROID_KEY* variables. Debug signing is forbidden."
+            "Release requires ANDROID_KEYSTORE_PATH and the fixed Okavango signing identity. Use the fixed Okavango signing identity."
         }
         val secret = keyStorePassword.get().toCharArray()
         val store = KeyStore.getInstance(KeyStore.getDefaultType())
@@ -135,21 +134,19 @@ abstract class VerifyDiPlaySigningTask : DefaultTask() {
         val cert = store.getCertificate(alias) ?: throw GradleException("Release signing certificate not found")
         val fingerprint = MessageDigest.getInstance("SHA-256")
             .digest(cert.encoded).joinToString("") { "%02x".format(it.toInt() and 0xff) }
-        check(fingerprint.equals("bca015c0cb43469fee55539b4054ff862671e7b41e6612eee0cb8566d327b7ae", true)) {
-            "Release certificate differs from v0.2.21; refusing to create an update-incompatible APK."
+        check(fingerprint.equals(expectedCertificate.get().asFile.readText().trim(), true)) {
+            "Release certificate differs from signing-cert.sha256; refusing an incompatible APK."
         }
     }
 }
 val verifyReleaseSigningIdentity by tasks.registering(VerifyDiPlaySigningTask::class) {
     group = "verification"
-    description = "Validate the original DiPlay release certificate before any release APK is signed."
+    description = "Validate the fixed Okavango release certificate before any release APK is signed."
     keyStoreFile.set(layout.file(providers.provider { android.signingConfigs.getByName("release").storeFile!! }))
-    val localKeystore = rootProject.file("release-signing.jks").takeIf { it.isFile }
-        ?: rootProject.file("release-signing.keystore").takeIf { it.isFile }
-    val hasLocal = localKeystore != null
-    keyStorePassword.set(providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orElse(if (hasLocal) "diplay123456" else ""))
-    keyAlias.set(providers.environmentVariable("ANDROID_KEY_ALIAS").orElse(if (hasLocal) "diplay" else ""))
-    keyPassword.set(providers.environmentVariable("ANDROID_KEY_PASSWORD").orElse(if (hasLocal) "diplay123456" else ""))
+    expectedCertificate.set(rootProject.layout.projectDirectory.file("signing-cert.sha256"))
+    keyStorePassword.set(providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orElse("android"))
+    keyAlias.set(providers.environmentVariable("ANDROID_KEY_ALIAS").orElse("androiddebugkey"))
+    keyPassword.set(providers.environmentVariable("ANDROID_KEY_PASSWORD").orElse("android"))
 }
 tasks.matching { it.name == "validateSigningRelease" }.configureEach {
     dependsOn(verifyReleaseSigningIdentity)

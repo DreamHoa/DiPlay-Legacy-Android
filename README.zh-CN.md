@@ -1,36 +1,22 @@
-# DiPlay · 吉利 Okavango 专用版
+# DiPlay · Geely Okavango
 
-本分支 **`okavango-api22`** 只针对 **2023 菲律宾版 Geely Okavango** 的车机开展适配。它不是面向其他车型的通用 CarPlay 软件。
+专门适配 **2023 菲律宾版 Geely Okavango** 车机：E01 / VF12LQJ、MT6735、Android 5.1 / API 22、1920×720。
+当前版本 **0.3.0 / versionCode 72**，包名 `com.shihab.diplay.okavango`。
 
-## 目标车机
+有线 CarPlay 和方向盘上一首/下一首已在此前版本实车验证；无线仍未验证。
+ECARX/PopView 回调（163 下一首、165 上一首）以及独立的 Android MEDIA_BUTTON / MediaSession 均保留。
+构建通过不代替本次修改后的实车回归。
 
-- Android **5.1 / API 22**
-- 芯片：MediaTek MT6735
-- 设备：Geely E01 / VF12LQJ
-- 实测固件：`SWVX11A0126H5173.00036`
-- 主要屏幕：1920 × 720
+已删除：BYD HUD/仪表输出、车辆数据探测及专用后台线程、旧版 Multidex 引导、T3 专用设备测试和部分低于 API22 的兼容分支。
+只保留英文、简体中文和固定的无字母 Geely 车标。USB、认证、加密及 API22 车机所需的兼容逻辑保留。
 
-## 实车验证范围
+正式包改用固定签名，可生成 GitHub 草稿 Release；后续同签名、更高版本可覆盖安装。
+此前的临时 debug 签名包可能需要先卸载，卸载会清除该包设置和配对数据。
+应用检查更新已指向本仓库，不再指向上游。
 
-- **有线 CarPlay：已验证工作。** 仍需通过私有的、经授权配置的 MFi 认证资源构建实车包；仓库内不包含这些凭据。
-- **方向盘上一首／下一首：已验证工作。** 原厂 PopView Ecarx Binder/AIDL 返回按键码 **163（下一首）／165（上一首）**；`GeelyWheelKeys.kt` 负责防止连按和调用 CarPlay HID。来自 `413812c` 的此链路保留不动。
-- **Android 标准媒体键：保留。** 原来的 `MEDIA_BUTTON`、`MediaSession`、按键码 87／88 路径是独立兼容入口，不能凭猜测删除。
-- **无线 CarPlay：本车尚未确认成功。** 其他吉利 E01 项目的无线方案依赖不同固件及专有蓝牙模块，不可直接当成此车已验证。
+- [构建命令与耗时分析](docs/BUILD.md)
+- [一次性签名配置与发布](docs/RELEASE_SIGNING.md)
+- [本次变更](docs/RELEASE-NOTES-NEXT.md)
 
-## 精简范围
-
-- 语言：**English / 简体中文**（另外提供跟随系统）；其他翻译已移除。
-- CarPlay 返回车机按钮固定为 **Geely 六分格盾形标志（无 GEELY 字母）**；每次连接直接使用内置图标生成的 PNG，不再提供品牌选择、上传自定义图片及其缓存设置。
-- 仅支持目标 APK **API 22**；移除了无用的 Android 4.4 旧媒体会话实现。
-- 移除了其他品牌图片、比亚迪 HUD 图标／专用调试器、旧样例 App。
-- 原项目仍有部分比亚迪设置、仪表和车辆状态相关源码与通用播放逻辑交织。**这些文件尚未全部清理完成**；在切断依赖并通过 CI／实车验证前，不作盲删。此车不会启动比亚迪专有服务。
-
-## 编译和验证
-
-推送本分支时，GitHub Actions 自动执行测试、Lint 及经授权的实车 APK 构建：
-
-[查看 Actions 工作流](.github/workflows/android.yml)
-
-包名 `com.shihab.diplay.okavango`，Android 最低版本 22，ARMv7/ARM64。带认证资源的 APK 不应公开分享。
-
-源代码来自 [programmerguohuajing/DiPlay-Legacy-Android](https://github.com/programmerguohuajing/DiPlay-Legacy-Android) 及 DiPlay 上游，遵守已有开源许可。Geely 商标属于权利人，本项目非汽车厂商官方软件。
+基于 [programmerguohuajing/DiPlay-Legacy-Android](https://github.com/programmerguohuajing/DiPlay-Legacy-Android)
+及更早的 DiPlay；保留原有版权及第三方许可说明。认证材料和签名私钥不进入源码。

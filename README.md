@@ -1,6 +1,6 @@
 # DiPlay · Geely Okavango (Android 5.1)
 
-A vehicle-specific CarPlay receiver for the **2023 Philippine-market Geely Okavango**. This work is maintained on the **`okavango-api22`** branch, not the generic upstream `main` branch.
+A vehicle-specific CarPlay receiver for the **2023 Philippine-market Geely Okavango**. The Okavango code is maintained on **`main`**; `okavango-api22` retains the same migration checkpoint.
 
 ## Target head unit
 
@@ -25,21 +25,23 @@ This fork prioritizes predictable operation and minimal overhead on **this head 
 
 The application packages **English and Simplified Chinese** translations only. The language picker offers these two languages and a system-default choice, with English as the resource fallback for other system languages. Brand presets and bundled brand images are restricted to **Geely**.
 
-This is a fork of an older multi-vehicle DiPlay tree. Some inherited BYD-specific Java/Kotlin features are still interleaved with the settings and session implementations and have **not** all been removed. Obsolete BYD HUD assets, demos, and reference documents were removed first; remaining interdependent source must be removed only with compile and vehicle-regression checks. No BYD code is required for the PopView steering-wheel listener.
+BYD vehicle-data probes, HUD/cluster writers, instrument-display routing and their dedicated tests have been removed. The generic phone metadata decoder remains for Android navigation widgets and call-safe wheel handling. API19 multidex bootstrap and pre-21 codec buffer access have also been removed. USB transport compatibility and cryptography used by this API22 unit remain.
 
-## Build and diagnostics
+## Build and release
 
-GitHub Actions on `okavango-api22` runs unit tests and lint, then builds an authenticated test APK from repository secrets:
+Current release line: **0.3.0 / versionCode 72**. Package: `com.shihab.diplay.okavango`.
+All modules target minimum API22; native libraries are ARMv7 and ARM64 only.
 
-[Android build workflow](.github/workflows/android.yml)
+The workflow runs unit tests, lint and source compilation, then produces a non-debuggable,
+fixed-signer release APK when the signing and authentication Secrets are configured.
+Manual `create_release` creates a draft GitHub Release with APK, checksum and signing metadata.
+The in-app updater points to this fork. It only discovers publicly published stable releases.
 
-- Package: `com.shihab.diplay.okavango`
-- Android minSdk: **22**
-- Supported native ABIs: ARMv7 / ARM64
-- CarPlay authentication inputs are never committed to this repository.
-- An APK containing provisioned authentication assets is sensitive; do not distribute the test artifact publicly.
-
-Use ADB logs tagged `DiPlay-GeelyWheel` and `DiPlay-MediaKeys` when checking the factory callback and the CarPlay forwarding pipeline. Never modify vendor Bluetooth services, system partitions, or root settings simply to install the application.
+See [build and timing](docs/BUILD.md), [signing and releases](docs/RELEASE_SIGNING.md),
+and [changes](docs/RELEASE-NOTES-NEXT.md). Previous runner-generated debug APKs may require
+one uninstall before switching to the fixed signer; subsequent same-key releases update in place.
+Never publish the signing backup. Authenticated APKs carry extractable accessory credentials;
+release drafts remain private to repository collaborators unless explicitly published.
 
 ## Attribution
 

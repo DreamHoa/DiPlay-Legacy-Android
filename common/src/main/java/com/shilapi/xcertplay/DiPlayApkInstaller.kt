@@ -14,7 +14,7 @@ import java.security.MessageDigest
 
 /**
  * Launches an OEM package installer without silently installing an APK.
- * Android 4.x package installers may not support FileProvider content URIs.
+ * Some Android 5.1 vendor package installers may not support FileProvider content URIs.
  * For those devices, make a separately verified copy in public Downloads.
  */
 internal object DiPlayApkInstaller {
@@ -23,7 +23,7 @@ internal object DiPlayApkInstaller {
 
     /** A malformed SDK_INT on an old head unit must not select a legacy file URI on Android 7+. */
     internal fun supportsFileInstall(sdk: Int, release: String): Boolean =
-        sdk in 19..23
+        sdk in 22..23
 
     internal fun contentIntents(uri: Uri): List<Intent> = listOf(
         Intent(Intent.ACTION_VIEW).apply {
@@ -52,7 +52,6 @@ internal object DiPlayApkInstaller {
      */
     fun createPublicCopy(context: Context, verifiedApk: File, verify: (File) -> Unit): File? {
         if (!supportsFileInstall(Build.VERSION.SDK_INT, Build.VERSION.RELEASE.orEmpty()) &&
-            !Build.VERSION.RELEASE.orEmpty().startsWith("4.") &&
             !Build.VERSION.RELEASE.orEmpty().startsWith("5.")) return null
         if (Environment.getExternalStorageState() != Environment.MEDIA_MOUNTED) return null
         val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)

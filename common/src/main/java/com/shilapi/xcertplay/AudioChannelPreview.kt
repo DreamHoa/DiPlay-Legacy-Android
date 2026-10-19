@@ -71,7 +71,7 @@ internal class AudioChannelPreview(private val onUnavailable: (Int) -> Unit) : C
                 check(built.state == AudioTrack.STATE_INITIALIZED) { "Audio output did not initialize" }
                 if (closed || generation.get() != request) return@submit
                 activeTrack.set(built)
-                if (android.os.Build.VERSION.SDK_INT >= 21) built.setVolume(0.6f) else built.setStereoVolume(0.6f, 0.6f)
+                built.setVolume(0.6f)
                 built.play()
                 var written = 0
                 while (written < pcm.size && !closed && generation.get() == request) {

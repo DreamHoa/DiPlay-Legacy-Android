@@ -25,7 +25,6 @@ import android.view.KeyEvent
 import androidx.core.graphics.drawable.toBitmap
 import com.shilapi.xcertplay.airplay.CarPlayMediaButton
 import com.shilapi.xcertplay.host.R
-import com.shilapi.xcertplay.hud.BydOutputSettings
 import com.shilapi.xcertplay.media.CarPlayNowPlaying
 import com.shilapi.xcertplay.orchestration.CarPlayController
 import java.util.concurrent.Executors
@@ -341,7 +340,6 @@ internal object CarPlayMediaKeys {
     }
 
     private val callback by lazy { if (Build.VERSION.SDK_INT >= 21) CarPlayMediaCallback(
-        experimentalDiLink3Keys = { appContext?.let(BydOutputSettings::carPlayCallControls) == true },
         send = { index, source -> send(index, source) },
     ) else null }
 
@@ -453,13 +451,12 @@ class LegacyMediaKeyReceiver : BroadcastReceiver() {
  */
 @androidx.annotation.RequiresApi(21)
 internal class CarPlayMediaCallback(
-    private val experimentalDiLink3Keys: () -> Boolean = { false },
     private val send: (index: Int, source: String) -> Unit,
 ) : MediaSession.Callback() {
     override fun onMediaButtonEvent(mediaButtonIntent: Intent): Boolean {
         @Suppress("DEPRECATION")
         val event = mediaButtonIntent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return false
-        val index = CarPlayMediaButton.forKeyCode(event.keyCode, experimentalDiLink3Keys())
+        val index = CarPlayMediaButton.forKeyCode(event.keyCode)
             ?: return super.onMediaButtonEvent(mediaButtonIntent)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
             send(index, KeyEvent.keyCodeToString(event.keyCode))

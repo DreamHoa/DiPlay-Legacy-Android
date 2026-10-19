@@ -12,8 +12,8 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class DiPlayUpdateClientTest {
-    private val name = "DiPlay-v0.2.34-legacy-release.apk"
-    private val prefix = "https://github.com/programmerguohuajing/DiPlay-Legacy-Android/releases/download/v0.2.34/"
+    private val name = "DiPlay-v0.2.34-okavango-release.apk"
+    private val prefix = "https://github.com/DreamHoa/DiPlay-Legacy-Android/releases/download/v0.2.34/"
 
     @Test fun legacyHttpOnlyAllowsTls12NeverSsl3() {
         val spec = DiPlayUpdateClient.legacyTlsSpec()
@@ -34,9 +34,9 @@ class DiPlayUpdateClientTest {
             java.net.SocketTimeoutException("Read timed out")))
     }
 
-    @Test fun githubApkPrefersDomesticRelayWithDirectFallback() {
+    @Test fun githubApkUsesTheForkReleaseDirectly() {
         val url = prefix + name
-        assertEquals(listOf("https://ghproxy.net/$url", url), DiPlayUpdateClient.downloadCandidates(url))
+        assertEquals(listOf(url), DiPlayUpdateClient.downloadCandidates(url))
         assertEquals(listOf("https://example.com/test.apk"), DiPlayUpdateClient.downloadCandidates("https://example.com/test.apk"))
     }
 
