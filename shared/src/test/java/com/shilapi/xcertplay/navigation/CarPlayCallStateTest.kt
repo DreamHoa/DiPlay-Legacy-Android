@@ -61,20 +61,10 @@ class CarPlayCallStateTest {
 
     @Test
     fun otherMessagesAndClearLeaveNoCall() {
-        assertFalse(state.accept(Iap2Messages.buildRaw(ClusterSongState.NOW_PLAYING_UPDATE) { u8(2, 2) }))
+        assertFalse(state.accept(Iap2Messages.buildRaw(NowPlayingState.NOW_PLAYING_UPDATE) { u8(2, 2) }))
         assertNull(state.current())
         state.accept(update("a", status = 2, name = "Mum"))
         state.clear()
         assertNull(state.current())
-    }
-
-    @Test
-    fun theNameFitsBydsCallCard() {
-        assertArrayEquals("Mum".toByteArray(Charsets.UTF_16LE), CarPlayCallState.nameBytes("Mum"))
-        val long = CarPlayCallState.nameBytes("A".repeat(40))
-        assertEquals(CarPlayCallState.MAX_NAME_BYTES, long.size)
-        // An emoji is never cut in half.
-        val emoji = CarPlayCallState.nameBytes("A".repeat(29) + "😀")
-        assertEquals("A".repeat(29), String(emoji, Charsets.UTF_16LE))
     }
 }

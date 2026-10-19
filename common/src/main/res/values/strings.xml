@@ -321,7 +321,7 @@
     <string name="settings_connection_summary">Phone, cable, wireless and automatic connection</string>
     <string name="settings_display_summary">Appearance, full screen, resolution and frame rate</string>
     <string name="settings_audio_summary">Speaker routing and music buffering</string>
-    <string name="settings_navigation_summary">Location reporting and supported dashboard guidance</string>
+    <string name="settings_navigation_summary">Location reporting to iPhone</string>
     <string name="settings_vehicle_summary">Driving side, wheel keys, car button and CarPlay gestures</string>
     <string name="settings_reconnect_pending">Saved. Some changes apply when CarPlay reconnects.</string>
     <string name="settings_reconnect_now">Reconnect now</string>
@@ -330,7 +330,7 @@
     <string name="settings_experimental_display">Display (experimental)</string>
     <string name="settings_diagnostics_summary">Save a local report when troubleshooting a connection.</string>
     <string name="settings_full_screen_description">Hide both system bars while CarPlay is open.</string>
-    <string name="settings_vehicle_description">Vehicle and dashboard features vary by model and firmware. Review them in Advanced settings before enabling experimental controls.</string>
+    <string name="settings_vehicle_description">Driving side and steering-wheel settings for this head unit.</string>
     <string name="settings_open_advanced">Open Advanced settings</string>
     <string name="setup_needs_attention">Setup needs attention</string>
     <string name="share">Share</string>
