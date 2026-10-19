@@ -167,14 +167,13 @@ jobs:
           set -euo pipefail
           # Actions artifacts of a public repository are readable by signed-in visitors.
           # Never upload the authenticated APK with actions/upload-artifact.
-          gh release create "$RELEASE_TAG" \
+          url=$(gh release create "$RELEASE_TAG" \
             "$RUNNER_TEMP"/okavango-dist/*.apk \
             "$RUNNER_TEMP"/okavango-dist/*.apk.sha256 \
             "$RUNNER_TEMP/okavango-dist/signing-cert.sha256" \
             "$RUNNER_TEMP/okavango-dist/release.json" \
             --repo "$REPOSITORY" --target "$SOURCE_SHA" --draft \
-            --title "DiPlay Okavango $RELEASE_TAG" --notes-file docs/RELEASE-NOTES-NEXT.md
-          url=$(gh release view "$RELEASE_TAG" --repo "$REPOSITORY" --json url --jq '.url')
+            --title "DiPlay Okavango $RELEASE_TAG" --notes-file docs/RELEASE-NOTES-NEXT.md)
           printf '### Draft Release ready\n\n[Download the signed APK](%s) (repository write access required).\n' "$url" >> "$GITHUB_STEP_SUMMARY"
       - name: Remove private inputs and authenticated build output
         if: always()

@@ -56,13 +56,17 @@ jobs:
               releases = [r for page in pages('releases?per_page=100') for r in page]
               release = next((r for r in releases if r['tag_name'] == tag), None)
               if release is None:
-                  gh('release', 'create', tag, '--repo', repo, '--target', os.environ['SOURCE_SHA'],
-                     '--draft', '--title', 'Legacy Okavango car-test APK backups',
-                     '--notes', 'Original APK archives moved out of public Actions artifacts. '
-                                'These retain their original signatures and are historical test builds. '
-                                'They contain extractable authentication material. Keep this Release a draft.')
-                  release = next(r for page in pages('releases?per_page=100')
-                                 for r in page if r['tag_name'] == tag)
+                  payload = json.dumps({
+                      'tag_name': tag, 'target_commitish': os.environ['SOURCE_SHA'], 'draft': True,
+                      'name': 'Legacy Okavango car-test APK backups',
+                      'body': 'Original APK archives moved out of public Actions artifacts. '
+                              'These retain their original signatures and are historical test builds. '
+                              'They contain extractable authentication material. Keep this Release a draft.',
+                  })
+                  # Use the POST response; the release-list endpoint can briefly return stale data.
+                  created = gh('api', '--method', 'POST', f'repos/{repo}/releases', '--input', '-',
+                               input=payload, stdout=subprocess.PIPE, text=True)
+                  release = json.loads(created.stdout)
               if not release['draft']:
                   raise SystemExit('Refusing to upload private backups to a published Release.')
               existing = {a['name'] for a in release['assets']}
