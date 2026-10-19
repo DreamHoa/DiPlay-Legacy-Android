@@ -258,11 +258,7 @@ class CarPlayController(
     private val wirelessResourceLock = Any()
     private val wirelessFailureReported = AtomicBoolean(false)
     @Volatile private var firstTcpWatchdog: FirstTcpWatchdog? = null
-    /**
-     * Issue #95: set when a wired AirPlay session becomes active, cleared when the wired
-     * control loop sends StartSession. Lets the wired live loop fail fast when the iPhone
-     * never opens the AirPlay TCP connection.
-     */
+    /** First-session proof for one wired data-path attempt, independent of media activity. */
     private val wiredTcpArrived = AtomicBoolean(false)
     private val startupTimer = java.util.concurrent.ScheduledThreadPoolExecutor(1) { task ->
         Thread(task, "diplay-first-tcp-timeout").apply { isDaemon = true }
@@ -2104,6 +2100,8 @@ class CarPlayController(
     }
 
     private fun openDataPaths(device: UsbDevice) {
+        // A fresh USB/NCM attempt needs fresh proof. Do this before a listener can accept RECORD.
+        wiredTcpArrived.set(false)
         phase = Phase.DATAPATHS
         availabilityPollGeneration.incrementAndGet()
         debugLog("wired opening iPhone USB data paths")
@@ -2312,15 +2310,7 @@ class CarPlayController(
                 locationProvider = locationProvider,
                 vehicleStatusProvider = vehicleStatusProvider,
                 onIncoming = ::onRouteFrame,
-                onProgress = { message ->
-                    debugLog("wired $message")
-                    if (message.contains("carplay-start-session")) {
-                        vpnService?.sendUnsolicitedNeighborAdvertisement(force = true)
-                        // Issue #95: arm the first-TCP watchdog — a new StartSession means any
-                        // previous session no longer counts.
-                        wiredTcpArrived.set(false)
-                    }
-                },
+                onProgress = ::onWiredControlProgress,
                 airPlayTcpArrived = { wiredTcpArrived.get() },
             )
             onStatus(
@@ -2341,6 +2331,16 @@ class CarPlayController(
             fail(error)
         } finally {
             if (ncmOwnedLocally) ncm.close()
+        }
+    }
+
+    private fun onWiredControlProgress(message: String) {
+        debugLog("wired $message")
+        if (message == "iap2 tx=0x4301 carplay-start-session") {
+            vpnService?.sendUnsolicitedNeighborAdvertisement(force = true)
+            // Availability notifications can repeat on an already-live, silent session. RECORD can
+            // also race ahead of this log callback. Neither event invalidates established proof.
+            debugLog("wired start-session reply; establishedAirPlay=${wiredTcpArrived.get()}")
         }
     }
 
