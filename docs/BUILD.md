@@ -13,6 +13,7 @@
 本次移除了 KitKat/T3 专用 instrumentation 引导，改用标准 AndroidJUnitRunner。
 实车运行 `com.shihab.diplay.okavango.test/androidx.test.runner.AndroidJUnitRunner`，
 用 `-e class com.shilapi.xcertplay.OkavangoDeviceRuntimeTest` 选择只读能力检测。
+设备测试 APK 与被测应用必须使用匹配的签名；普通 debug 测试包不用于检测固定签名的已安装 Release。
 
 签名、认证材料及发布流程见 [RELEASE_SIGNING.md](RELEASE_SIGNING.md)。
 
@@ -33,6 +34,7 @@ Gradle task-output cache 原来也没有启用。每次都重新做了很多工�
 改进：
 
 - 显式允许可信分支写 Gradle 缓存，并启用 task-output cache。
+- 单独缓存 Robolectric 的 Android 运行库（当前测试集约 770 MB），它们不在 Gradle 默认缓存目录内。
 - 同一 job 复用 Gradle daemon；保留单元测试和 Lint。
 - 所有模块最低 API 统一为 22；原生代码仅编译 ARMv7/ARM64。
 - 删除 BYD HUD/仪表/车辆数据源码及其专用测试、API19 的 Multidex 引导。

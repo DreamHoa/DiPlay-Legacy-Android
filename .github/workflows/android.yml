@@ -77,6 +77,13 @@ jobs:
           # The default action only writes caches on the default branch (main).
           # Development happens on okavango-api22, so allow trusted pushes to save them too.
           cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Cache Robolectric Android runtime images
+        uses: actions/cache@v4
+        with:
+          # These public SDK jars live outside GRADLE_USER_HOME (about 770 MB for this suite).
+          path: ~/.m2/repository/org/robolectric
+          key: ${{ runner.os }}-robolectric-${{ hashFiles('common/build.gradle.kts', 'shared/build.gradle') }}
+          restore-keys: ${{ runner.os }}-robolectric-
       - name: Unit tests, lint and source compilation
         run: ./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :mobile:lintDebug :mobile:assembleDebug --build-cache
       - name: Optional API 22 device-test compilation

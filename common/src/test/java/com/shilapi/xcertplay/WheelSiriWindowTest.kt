@@ -137,7 +137,7 @@ class WheelSiriWindowTest {
         assertEquals(KeyEvent.KEYCODE_F6, WheelZoomSettings.key(settings, WheelZoomSettings.Role.SIRI)?.code)
     }
 
-    @Test fun siriZoomAndJoystickShowTheirSharedServiceSetupOnlyOnce() {
+    @Test fun siriShowsItsServiceSetupOnlyOnceWithoutBydJoystick() {
         settings.setTheme(android.R.style.Theme_Material_NoActionBar)
         WheelZoomSettings.setEnabled(settings, true)
         WheelZoomSettings.setJoystick(settings, true)
@@ -161,7 +161,7 @@ class WheelSiriWindowTest {
         // The setup sits above the features it serves.
         assertTrue(texts.indexOf(settings.getString(R.string.wheel_keys_service_off)) <
             texts.indexOf(settings.getString(R.string.wheel_siri_key)))
-        assertTrue(texts.any { it == settings.getString(R.string.wheel_joystick) })
+        assertFalse(texts.any { it == settings.getString(R.string.wheel_joystick) })
     }
 
     private fun wheelControls() = LinearLayout(settings).also { controls ->
