@@ -14,7 +14,8 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [22, 28], manifest = Config.NONE)
+// Robolectric 4.17 supports API 23 and newer; API 22 still requires device validation.
+@Config(sdk = [23, 28], manifest = Config.NONE)
 @LooperMode(LooperMode.Mode.PAUSED)
 class WiredSessionStartupRegressionTest {
     private class Fixture : AutoCloseable {
