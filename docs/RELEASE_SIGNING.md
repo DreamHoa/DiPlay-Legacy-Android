@@ -1,49 +1,68 @@
 # Okavango 签名与发布
 
 包名固定为 `com.shihab.diplay.okavango`，最低 Android 5.1 / API 22。
-正式 APK 使用 `release` 构建类型（不可调试），启用 V1 + V2 签名。
-`signing-cert.sha256` 固定本项目的签名证书指纹；它不是上游或 Mario 的签名。
+正式 APK 使用不可调试的 `release` 构建类型，启用 V1 + V2 签名。
+`signing-cert.sha256` 固定本项目证书指纹；签名私钥不会装进 APK。
 
 ## 一次配置
 
-此前 Actions 日志确认未配置持久 debug 签名，旧包的签名随 runner 改变。
-APK 只有公钥证书，无法从旧 APK 恢复签名私钥。因此无法保证覆盖此前安装的临时签名包。
-首次换为固定签名可能需要卸载旧 Okavango 包；卸载会清除该包设置及配对数据。
-以后保留同一个签名密钥，并递增版本号，就可以覆盖安装。
+使用新版 `Okavango-Signing-Secure-Backup.zip`。它对原来同一把私钥重新加密，证书与签名身份不变。
+旧的弱口令备份不再用于新构建。新版备份含密钥及密码，必须私下保存，不得上传到公开仓库。
 
-在仓库 Settings → Secrets and variables → Actions 中添加：
+1. 仓库 **Settings → Environments → New environment**，名称填 `okavango-release`。
+2. 在该环境的 **Deployment branches and tags** 中选 **Selected branches and tags**，新增 **Branch: main**。
+   不要添加通配符或 Tag 规则。无需额外配置审批人；仓库写权限用户手动触发发布。
+3. 在该环境的 **Environment secrets** 中添加两项，分别粘贴备份内同名 TXT 的完整内容：
 
-| Secret | 内容 |
-| --- | --- |
-| `OKAVANGO_KEYSTORE_B64` | 签名备份中同名 TXT 文件的完整内容（不要提交到仓库） |
-| `DIPLAY_MFI_PK8_B64` | 已配置的授权认证私钥，保持原值 |
-| `DIPLAY_MFI_P7B_B64` | 已配置的授权认证证书，保持原值 |
+   | Secret | 内容 |
+   | --- | --- |
+   | `OKAVANGO_KEYSTORE_B64` | 新版备份中同名 TXT；重新加密后的签名文件 |
+   | `OKAVANGO_KEYSTORE_PASSWORD` | 新版备份中同名 TXT；随机生成的强密码 |
 
-签名备份包含 `okavango-signing.p12`，alias 为 `androiddebugkey`，口令均为 `android`。
-这是专用生成的固定密钥；alias/口令沿用 Android 习惯只为简化配置，并不把 release APK 变成 debug APK。
-必须保存这份备份。不要重新生成密钥、替换指纹或公开备份文件。
-旧 `OKAVANGO_DEBUG_KEYSTORE_B64` 已弃用；发布只读取明确配置的固定密钥。
+4. **Settings → Secrets and variables → Actions → Repository secrets** 中，原有
+   `DIPLAY_MFI_PK8_B64` 和 `DIPLAY_MFI_P7B_B64` 保持原值。
+   若存在旧的 `OKAVANGO_KEYSTORE_B64`、`OKAVANGO_KEYSTORE_PASSWORD` 或
+   `OKAVANGO_DEBUG_KEYSTORE_B64` 仓库级 Secret，删除这些旧签名项；签名只放在上述发布环境。
 
-## 生成 APK 和 Release
+MFi 两项是既有认证输入，不是 APK 签名。仓库写权限用户可以修改工作流并访问仓库级 Secrets，
+因此只给受信任人员写权限。需要进一步隔离时，可把 MFi 两项也迁入同一个 Environment，值保持不变。
 
-普通代码 push 会执行测试、Lint 和源码编译；三项 Secrets 都具备时再生成可安装 APK。
-未配置签名时会明确提示只完成源码验证，不会用随机签名生成一个无法持续升级的车测包。
+Gradle 从环境变量读取密码，不在命令行或源码中保存。PKCS12 的 store/key 使用同一个强密码。
+密钥 alias 仍为 `androiddebugkey`，仅为条目名称；它不是 Android 公用签名，也不使 APK 变成 debug 包。
+默认 `android` 口令已禁用。只允许显式密码和固定证书，错误输入会在打包前失败。
 
-Actions → **Okavango Android 5.1 checks and APK** → Run workflow，勾选 `create_release`。
-通过验证后生成 `okavango-installable-release` artifact 和 GitHub **草稿 Release**。
-草稿可供仓库有权限的成员下载；它不向公众开放，也不会出现在应用的公开更新检查中。
+## 日常检查与发布
 
-认证 APK 内含可提取的 MFi 材料；发布流程不会自动公开这些材料。
-只有在材料的分发授权允许时，才手动公开 Release。公开后，应用才会通过本仓库更新渠道发现它。
+- 代码 push、PR：只做公共源码扫描、单元测试、Lint 和源码编译，不读取签名或 MFi Secrets。
+- 正式发布：**Actions → Okavango Android 5.1 checks and APK → Run workflow**，选择 **main**，
+  保持 `create_release` 勾选。检查通过后，独立 runner 在 `okavango-release` 环境中打包。
+- 非 main 分支的发布请求会失败；环境的 main 分支规则提供另一层服务器端限制。
+- 签名阶段不恢复或写入 Gradle 缓存，禁用任务/配置缓存；结束时清理认证材料和构建输出。
+- 实际 APK 校验包名、API22、双 ARM ABI、不可调试属性、V1 签名、固定证书及认证资产。
 
-每个新 Release 都先增加 `mobile/build.gradle.kts` 中的 `versionCode` 和 `versionName`。
-版本格式为 `x.y.z`；Release 标签自动对应 `vx.y.z`。已有标签不覆盖、不删除。
-APK 同时附带 `.sha256`、签名指纹和 `release.json`，验证脚本检查实际包名、API、ABI、V1 签名和证书。
+成功后到仓库 **Releases** 页面，以拥有仓库写权限的账号查看草稿及下载 APK。
+APK、SHA-256 校验文件、证书指纹和 `release.json` 直接上传到草稿，不作为 Actions artifact 分发。
+公开仓库的 Actions artifacts 可被具有读权限的已登录 GitHub 用户下载；不能将其当作私有存储。
+只有无私密材料的测试报告保留为 Actions artifact。
 
-本地源码验证（不需要 MFi）：
+流程不会自动点击 Publish。认证 APK 内含可提取的 MFi 私钥；Secrets 保护构建输入，
+无法保护已经交到接收者手里的 APK。公开 Release 前需确认认证材料允许该分发范围。
+草稿不是加密容器；有仓库写权限的成员可访问。
+
+## 后续升级
+
+每次新 Release 增加 `mobile/build.gradle.kts` 中的 `versionCode` 和 `versionName`。
+版本格式 `x.y.z`；Release 标签自动对应 `vx.y.z`。已有草稿、Release 或 Tag 不覆盖。
+失败时若已留下草稿，检查后处理该草稿，或增加版本号重新发布，不反复覆盖已有版本。
+
+此前随机 debug 签名包可能需要首次卸载；卸载会清除设置和配对。
+后续同包名、同证书且更高版本的正式 APK 可覆盖安装。更改密钥库密码不会更改证书，
+但重新生成私钥或证书会破坏 Android 5.1 的这条升级链。
+
+本地源码验证（不需要私密材料）：
 
 ```sh
 ./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :mobile:lintDebug :mobile:assembleDebug
 ```
 
-`assembleDebug` 只用于开发验证，不是可独立连接手机的分发包。
+`assembleDebug` 仅用于开发验证，不是独立连接手机的分发包。

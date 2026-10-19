@@ -35,11 +35,12 @@ Gradle task-output cache 原来也没有启用。每次都重新做了很多工�
 
 - 显式允许可信分支写 Gradle 缓存，并启用 task-output cache。
 - 单独缓存 Robolectric 的 Android 运行库（当前测试集约 770 MB），它们不在 Gradle 默认缓存目录内。
-- 同一 job 复用 Gradle daemon；保留单元测试和 Lint。
+- 源码检查 job 内复用 Gradle daemon；保留单元测试和 Lint。
 - 所有模块最低 API 统一为 22；原生代码仅编译 ARMv7/ARM64。
 - 删除 BYD HUD/仪表/车辆数据源码及其专用测试、API19 的 Multidex 引导。
 - Google Maven 只查询 Android/AndroidX 相关依赖，避免向它逐个查询 Maven Central 库。
-- 源码检查在注入 Secrets 之前完成；认证打包禁用配置缓存和输出缓存。
+- 源码检查 job 不接触 Secrets；认证打包使用独立 runner，不恢复/保存缓存，并禁用配置缓存和输出缓存。
+- 日常 push 不再重复构建认证 APK；仅手动从 main 创建正式草稿 Release 时构建。
 
 首次冷构建仍需下载工具和依赖。固定签名 Release 会比最后的 debug 打包多编译一个变体；
 实际提速应以新 Actions 的冷/热缓存记录为准，不承诺每次固定分钟数。

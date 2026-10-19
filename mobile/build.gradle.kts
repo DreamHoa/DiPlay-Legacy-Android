@@ -51,9 +51,9 @@ android {
         create("release") {
             storeFile = providers.environmentVariable("ANDROID_KEYSTORE_PATH")
                 .orNull?.let { file(it) } ?: file("missing-okavango-keystore.p12")
-            storePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").getOrElse("android")
+            storePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").getOrElse("")
             keyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").getOrElse("androiddebugkey")
-            keyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").getOrElse("android")
+            keyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").getOrElse("")
             enableV1Signing = true // Android 5.1 does not understand APK Signature Scheme v2.
             enableV2Signing = true
         }
@@ -116,7 +116,10 @@ abstract class VerifyDiPlaySigningTask : DefaultTask() {
         val keyFile = keyStoreFile.orNull?.asFile
         check(keyFile?.isFile == true && keyStorePassword.get().isNotBlank() &&
             keyAlias.get().isNotBlank() && keyPassword.get().isNotBlank()) {
-            "Release requires ANDROID_KEYSTORE_PATH and the fixed Okavango signing identity. Use the fixed Okavango signing identity."
+            "Release requires ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_PASSWORD and the fixed Okavango signing identity."
+        }
+        check(keyStorePassword.get().length >= 24 && keyPassword.get().length >= 24) {
+            "Release signing requires strong explicit passwords (at least 24 characters); debug defaults are forbidden."
         }
         val secret = keyStorePassword.get().toCharArray()
         val store = KeyStore.getInstance(KeyStore.getDefaultType())
@@ -144,9 +147,9 @@ val verifyReleaseSigningIdentity by tasks.registering(VerifyDiPlaySigningTask::c
     description = "Validate the fixed Okavango release certificate before any release APK is signed."
     keyStoreFile.set(layout.file(providers.provider { android.signingConfigs.getByName("release").storeFile!! }))
     expectedCertificate.set(rootProject.layout.projectDirectory.file("signing-cert.sha256"))
-    keyStorePassword.set(providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orElse("android"))
+    keyStorePassword.set(providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orElse(""))
     keyAlias.set(providers.environmentVariable("ANDROID_KEY_ALIAS").orElse("androiddebugkey"))
-    keyPassword.set(providers.environmentVariable("ANDROID_KEY_PASSWORD").orElse("android"))
+    keyPassword.set(providers.environmentVariable("ANDROID_KEY_PASSWORD").orElse(""))
 }
 tasks.matching { it.name == "validateSigningRelease" }.configureEach {
     dependsOn(verifyReleaseSigningIdentity)

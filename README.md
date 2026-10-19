@@ -32,16 +32,17 @@ BYD vehicle-data probes, HUD/cluster writers, instrument-display routing and the
 Current release line: **0.3.0 / versionCode 72**. Package: `com.shihab.diplay.okavango`.
 All modules target minimum API22; native libraries are ARMv7 and ARM64 only.
 
-The workflow runs unit tests, lint and source compilation, then produces a non-debuggable,
-fixed-signer release APK when the signing and authentication Secrets are configured.
-Manual `create_release` creates a draft GitHub Release with APK, checksum and signing metadata.
+Push and PR workflows run unit tests, lint and source compilation without private inputs.
+Manual `create_release` from `main` uses the `okavango-release` environment to produce a
+non-debuggable, fixed-signer APK and upload it directly to a draft GitHub Release with checksum
+and signing metadata. Authenticated APKs are never uploaded as public Actions artifacts.
 The in-app updater points to this fork. It only discovers publicly published stable releases.
 
 See [build and timing](docs/BUILD.md), [signing and releases](docs/RELEASE_SIGNING.md),
 and [changes](docs/RELEASE-NOTES-NEXT.md). Previous runner-generated debug APKs may require
 one uninstall before switching to the fixed signer; subsequent same-key releases update in place.
 Never publish the signing backup. Authenticated APKs carry extractable accessory credentials;
-release drafts remain private to repository collaborators unless explicitly published.
+release drafts are restricted to repository writers unless explicitly published.
 
 ## Attribution
 

@@ -30,6 +30,6 @@ GitHub Actions on `main` runs:
 ./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :mobile:lintDebug --no-daemon
 ```
 
-Do **not** invoke `:home` or `:maphost`: those modules were deleted. Also compile `:mobile:assembleDebug` for source verification. The workflow then builds `:mobile:assembleStandaloneRelease` only with the fixed signing and authentication Secrets, verifies the actual API22 APK and uploads an installable artifact. No random-signed car APK is distributed. See `docs/RELEASE_SIGNING.md`. Releases are created as drafts because authenticated APKs contain extractable credentials.
+Do **not** invoke `:home` or `:maphost`: those modules were deleted. Also compile `:mobile:assembleDebug` for source verification. Push and PR checks must not read private inputs. Only a manual release from `main`, after checks pass, builds `:mobile:assembleStandaloneRelease` in the `okavango-release` environment with explicit strong signing passwords and authentication Secrets. It verifies the actual API22 APK and uploads it directly to a draft Release. Never use public Actions artifacts or shared caches for authenticated packages. No random-signed car APK is distributed. See `docs/RELEASE_SIGNING.md`. Releases are created as drafts because authenticated APKs contain extractable credentials.
 
 A source review, unit-test pass or green CI does **not** replace final in-car USB, audio, touch, previous/next and reconnection tests. Report what passed and what remains unverified; avoid accumulating device-specific hacks.
