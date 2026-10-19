@@ -1,204 +1,46 @@
-# Build DiPlay
+# 构建
 
-Use this procedure to build the DiPlay app for an Android head unit.
-Run the commands from the repository root, where `gradlew` and `settings.gradle.kts` are located.
+目标：2023 菲律宾 Geely Okavango，Android 5.1 / API 22，ARMv7 + ARM64。
 
-## Select the application
-
-This repository contains several Android applications.
-Select `mobile` to build the main DiPlay app.
-
-| Gradle module | Purpose | Debug APK |
-| --- | --- | --- |
-| `:mobile` | Main DiPlay app for Android head units | `mobile/build/outputs/apk/debug/mobile-debug.apk` |
-| `:maphost` | Sample application that displays a map from DiPlay | `samples/maphost/build/outputs/apk/debug/maphost-debug.apk` |
-| `:home` | Optional DiPlay Home launcher | `samples/home/build/outputs/apk/debug/home-debug.apk` |
-| `:automotive` | Separate Android Automotive application inherited from xcertplay | `automotive/build/outputs/apk/debug/automotive-debug.apk` |
-
-The `:common` and `:shared` modules are libraries.
-The applications use these libraries.
-
-If the installed app is **DiPlay map host**, you selected `:maphost` or its APK.
-Build `:mobile` and select `mobile-debug.apk` to install the main app.
-A command such as `./gradlew assembleDebug` can build more than one application.
-Use the module name in each build command to select the required application.
-
-## Prepare the build environment
-
-Install these tools:
-
-- JDK 25.
-- Android SDK Platform 37 (`platforms;android-37.0`).
-- Android SDK Build-Tools 36.0.0.
-- Android SDK Platform-Tools.
-- Android NDK 25.2.9519653 (r25c), required for Android 4.4 / API 19 native compatibility.
-
-Use the Gradle wrapper included in this repository.
-The first build needs an internet connection to download dependencies.
-
-1. Open the repository root in Android Studio.
-2. Install the Android SDK packages with **Tools → SDK Manager**.
-3. Set **Gradle JDK** to JDK 25 in the Android Studio Gradle settings.
-4. Wait for Gradle sync to finish.
-
-For a terminal build, set `JAVA_HOME` to your JDK 25 directory.
-Set `ANDROID_HOME` to your Android SDK directory.
-You can also specify the SDK directory in the root `local.properties` file:
-
-```properties
-sdk.dir=/absolute/path/to/Android/sdk
-```
-
-Keep `local.properties` outside Git.
-Check the Java version before the build:
+使用 JDK 25、Gradle Wrapper 9.5.0、Android SDK 37.0、Build Tools 36.0.0、NDK 25.2.9519653。
+保留现有编译工具链，避免把代码清理和依赖升级混在一起。
 
 ```sh
-java -version
+./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :mobile:lintDebug :mobile:assembleDebug --build-cache
 ```
 
-The output must identify Java 25.
-On Windows, use `gradlew.bat` in place of `./gradlew` in the commands below. The shared native build explicitly passes `HOST_OS=windows` to NDK r25c, so Git for Windows `uname` output cannot break host detection.
+可选设备测试包：`./gradlew :mobile:assembleDebugAndroidTest`。
+本次移除了 KitKat/T3 专用 instrumentation 引导，改用标准 AndroidJUnitRunner。
+实车运行 `com.shihab.diplay.okavango.test/androidx.test.runner.AndroidJUnitRunner`，
+用 `-e class com.shilapi.xcertplay.OkavangoDeviceRuntimeTest` 选择只读能力检测。
+设备测试 APK 与被测应用必须使用匹配的签名；普通 debug 测试包不用于检测固定签名的已安装 Release。
 
-## Build the main app
+签名、认证材料及发布流程见 [RELEASE_SIGNING.md](RELEASE_SIGNING.md)。
 
-For a source build without runtime authentication assets:
+## 为什么以前慢
 
-```sh
-./gradlew :mobile:assembleDebug
-```
+基准：Actions run `39184208336`，job 约 9 分 20 秒。
 
-Check that this file exists:
-
-```text
-mobile/build/outputs/apk/debug/mobile-debug.apk
-```
-
-The debug application ID is `com.shihab.diplay.hudtest`.
-The release application ID is `com.shihab.diplay`.
-
-The source APK contains no accessory identity unless you supply runtime authentication assets.
-Standalone CarPlay needs these assets to connect to an iPhone.
-Use the car-test procedure below for that purpose.
-Tests generate synthetic identities at runtime.
-Keep test private keys outside Git.
-
-### Use Android Studio
-
-1. Open **Run → Edit Configurations**.
-2. Select an **Android App** configuration, or create one.
-3. Set **Module** to `mobile`.
-4. Select this configuration in the toolbar.
-5. Select the Android device.
-6. Click **Run** to install the main debug app.
-
-To build an APK without installation, run `:mobile:assembleDebug` in the Android Studio terminal.
-Select the APK from the `mobile` output directory.
-
-## Check the source build
-
-Run the unit tests, lint checks, and main debug build:
-
-```sh
-./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :mobile:lintDebug :mobile:assembleDebug
-```
-
-Check that Gradle reports `BUILD SUCCESSFUL`.
-For the complete CI procedure, see [the Android workflow](../.github/workflows/android.yml).
-That workflow also checks and builds the `home` and `maphost` applications.
-
-## Build a standalone car-test APK
-
-Prepare an external directory with these runtime authentication files:
-
-```text
-runtime-assets/
-└── offline-mfi/
-    ├── identity.pk8
-    └── certificate.p7b
-```
-
-Use only the intended runtime files in this directory.
-Keep the directory and its private key outside Git.
-The build rejects unexpected credential containers in APK assets.
-
-1. Set `DIPLAY_AUTH_ASSETS_DIR` to the absolute directory path.
-2. Run the standalone debug task.
-
-```sh
-DIPLAY_AUTH_ASSETS_DIR=/absolute/path/to/runtime-assets ./gradlew :mobile:assembleStandaloneDebug
-```
-
-The task stops if either required file is absent, empty or invalid. It loads the
-key and certificate, checks P-256 key matching, and verifies repeated challenge
-signatures and rejection of changed challenges before packaging. This checks local
-identity consistency, not iPhone trust or a successful CarPlay session.
-Its APK output is `mobile/build/outputs/apk/debug/mobile-debug.apk`.
-Check both files in the APK against your selected local inputs:
-
-- `assets/offline-mfi/identity.pk8`.
-- `assets/offline-mfi/certificate.p7b`.
-
-Use this APK for a standalone connection test.
-Update the existing test app with the same signing key to keep its settings.
-Different signing keys cannot update the same installed application.
-
-## Build a release APK
-
-Prepare the runtime assets as described in the car-test procedure.
-Set these environment variables locally:
-
-| Variable | Value |
+| 阶段 | 耗时 |
 | --- | --- |
-| `DIPLAY_AUTH_ASSETS_DIR` | Absolute path to the runtime assets directory |
-| `ANDROID_KEYSTORE_PATH` | Path to your Android signing keystore |
-| `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
-| `ANDROID_KEY_ALIAS` | Signing key alias |
-| `ANDROID_KEY_PASSWORD` | Signing key password |
+| SDK 准备 | 23 秒 |
+| 测试、Lint 及它们依赖的编译 | 7 分 58 秒 |
+| 最后的认证 debug APK 打包 | 42 秒 |
 
-Keep the keystore and passwords outside Git.
-Run the release checks and build:
+不能把全部 8 分钟算成测试本身：这个阶段也包含依赖解析、源码及测试编译、资源处理和 Lint。
+原 setup-gradle 默认只允许默认分支 main 写缓存，而实际开发 push 在 okavango-api22；
+Gradle task-output cache 原来也没有启用。每次都重新做了很多工作。
 
-```sh
-./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :mobile:lintRelease :mobile:assembleStandaloneRelease
-```
+改进：
 
-The output is `mobile/build/outputs/apk/release/mobile-release.apk`.
-The APK contains the runtime identity you supplied.
-Recipients can extract that identity from the APK.
-The APK excludes the Android signing key.
-See [the project notices](THIRD_PARTY_NOTICES.md) for the experimental identity used in public releases.
+- 显式允许可信分支写 Gradle 缓存，并启用 task-output cache。
+- 单独缓存 Robolectric 的 Android 运行库（当前测试集约 770 MB），它们不在 Gradle 默认缓存目录内。
+- 源码检查 job 内复用 Gradle daemon；保留单元测试和 Lint。
+- 所有模块最低 API 统一为 22；原生代码仅编译 ARMv7/ARM64。
+- 删除 BYD HUD/仪表/车辆数据源码及其专用测试、API19 的 Multidex 引导。
+- Google Maven 只查询 Android/AndroidX 相关依赖，避免向它逐个查询 Maven Central 库。
+- 源码检查 job 不接触 Secrets；认证打包使用独立 runner，不恢复/保存缓存，并禁用配置缓存和输出缓存。
+- 日常 push 不再重复构建认证 APK；仅手动从 main 创建正式草稿 Release 时构建。
 
-### Test the signed release on legacy Android
-
-Build instrumentation for the production application instead of the debug app:
-
-```sh
-./gradlew :mobile:assembleStandaloneRelease :mobile:assembleReleaseAndroidTest -PlegacyInstrumentationBuildType=release
-adb install -r mobile/build/outputs/apk/release/mobile-release.apk
-adb install -r mobile/build/outputs/apk/androidTest/release/mobile-release-androidTest.apk
-adb shell am instrument -w -r com.shihab.diplay.test/com.shilapi.xcertplay.T3LegacyInstrumentation
-```
-
-With multiple connected devices, add `-s SERIAL` to each adb command. Check both
-`failures: 0` and `INSTRUMENTATION_CODE: -1`; adb's exit code alone is insufficient.
-The default test build type remains debug when the property is omitted.
-API 19 cold-start classes are explicitly retained in `mobile/multidex-config.pro`.
-Run fresh and same-key upgrade installations as well as instrumentation; a
-successful debug launch does not establish that the release main DEX is correct.
-These emulator checks do not establish a physical CarPlay session.
-
-The public source archive matches the release tag.
-It excludes runtime identities, signing keys, local configuration, and build output.
-The retired `build-beta.py` helper is no longer part of the build procedure.
-
-## Correct build problems
-
-| Symptom | Action |
-| --- | --- |
-| Installed app is DiPlay map host | Select `mobile` in Android Studio. Build and install the APK from the `mobile` output directory. |
-| Gradle cannot find the Android SDK | Set `ANDROID_HOME` or the `sdk.dir` value in `local.properties`. |
-| A required SDK or NDK package is absent | Install the listed package with SDK Manager. |
-| Java or Gradle JDK version is incorrect | Set the terminal JDK and Android Studio Gradle JDK to Java 25. |
-| Source APK cannot start standalone CarPlay | Supply runtime authentication assets. Use `:mobile:assembleStandaloneDebug`. |
-| Standalone task reports missing authentication files | Check the external directory path and both required files. |
-| Android rejects an app update | Use the same application ID and signing key as the installed app. |
+首次冷构建仍需下载工具和依赖。固定签名 Release 会比最后的 debug 打包多编译一个变体；
+实际提速应以新 Actions 的冷/热缓存记录为准，不承诺每次固定分钟数。

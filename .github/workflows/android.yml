@@ -1,0 +1,183 @@
+name: Okavango Android 5.1 checks and APK
+
+on:
+  push:
+    branches: [main, okavango-api22]
+    paths-ignore: ['docs/**', '**.md', 'CHANGELOG.md']
+  pull_request:
+    branches: [main, okavango-api22]
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: Build the signed APK and save a draft Release (main only)
+        type: boolean
+        default: true
+      full_suite:
+        description: Also compile the API 22 device-test APK
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: okavango-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.create_release && 'release' || 'checks' }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  checks:
+    name: Tests, lint and source compilation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require main for release requests
+        if: github.event_name == 'workflow_dispatch' && inputs.create_release && github.ref != 'refs/heads/main'
+        run: |
+          echo '::error::Signed releases can only be built manually from main.'
+          exit 1
+      - name: Check public source inputs
+        run: |
+          python3 -m unittest discover -s scripts/tests -p test_public_tree.py
+          python3 scripts/check_public_tree.py
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools platforms;android-37.0 build-tools;36.0.0 ndk;25.2.9519653
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Cache Robolectric Android runtime images
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: ${{ runner.os }}-robolectric-${{ hashFiles('common/build.gradle.kts', 'shared/build.gradle') }}
+          restore-keys: ${{ runner.os }}-robolectric-
+      - name: Unit tests, lint and source compilation
+        run: ./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :mobile:lintDebug :mobile:assembleDebug --build-cache
+      - name: Optional API 22 device-test compilation
+        if: inputs.full_suite
+        run: ./gradlew :mobile:assembleDebugAndroidTest --build-cache
+      - name: Test and lint reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: okavango-test-reports
+          path: |
+            shared/build/reports/tests/
+            common/build/reports/tests/
+            mobile/build/reports/lint-results-debug.html
+          retention-days: 7
+
+  release:
+    name: Sign APK and save draft Release
+    needs: checks
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.create_release
+    environment: okavango-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check release inputs
+        env:
+          SIGNER: ${{ secrets.OKAVANGO_KEYSTORE_B64 }}
+          SIGNER_PASSWORD: ${{ secrets.OKAVANGO_KEYSTORE_PASSWORD }}
+          MFI_KEY: ${{ secrets.DIPLAY_MFI_PK8_B64 }}
+          MFI_CERT: ${{ secrets.DIPLAY_MFI_P7B_B64 }}
+        run: |
+          set -euo pipefail
+          for input in SIGNER SIGNER_PASSWORD MFI_KEY MFI_CERT; do
+            if [[ -z "${!input}" ]]; then
+              echo "::error::Missing release input: $input. See docs/RELEASE_SIGNING.md."
+              exit 1
+            fi
+          done
+          if [[ ${#SIGNER_PASSWORD} -lt 24 || "$SIGNER_PASSWORD" == android ]]; then
+            echo '::error::The signing password must be strong; default/debug passwords are forbidden.'
+            exit 1
+          fi
+      - name: Refuse replacing an existing Release or tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          text = Path('mobile/build.gradle.kts').read_text()
+          version = re.search(r'versionName = "(\d+\.\d+\.\d+)"', text).group(1)
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write(f'RELEASE_TAG=v{version}\n')
+          PY
+          tag=$(python3 -c 'import re; from pathlib import Path; print("v"+re.search(r"versionName = \"(\d+\.\d+\.\d+)\"",Path("mobile/build.gradle.kts").read_text()).group(1))')
+          # Read the full lists: authentication/network failures must fail, not imply "not found".
+          gh api --paginate "repos/$REPOSITORY/releases" --jq '.[].tag_name' > "$RUNNER_TEMP/release-tags.txt"
+          gh api --paginate "repos/$REPOSITORY/tags" --jq '.[].name' > "$RUNNER_TEMP/git-tags.txt"
+          if grep -Fxq "$tag" "$RUNNER_TEMP/release-tags.txt" "$RUNNER_TEMP/git-tags.txt"; then
+            echo '::error::This release version already exists. Increase versionCode and versionName.'
+            exit 1
+          fi
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools platforms;android-37.0 build-tools;36.0.0 ndk;25.2.9519653
+      # A fresh runner and no setup-gradle/cache action: signing inputs, Gradle state and
+      # authenticated package outputs cannot enter caches shared with source-check jobs.
+      - name: Provision, sign and verify the authenticated APK
+        env:
+          SIGNER: ${{ secrets.OKAVANGO_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.OKAVANGO_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.OKAVANGO_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: androiddebugkey
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/okavango-signing.p12
+          DIPLAY_AUTH_ASSETS_DIR: ${{ runner.temp }}/okavango-assets
+          MFI_KEY: ${{ secrets.DIPLAY_MFI_PK8_B64 }}
+          MFI_CERT: ${{ secrets.DIPLAY_MFI_P7B_B64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$DIPLAY_AUTH_ASSETS_DIR/offline-mfi"
+          printf '%s' "$SIGNER" | base64 -d > "$ANDROID_KEYSTORE_PATH"
+          printf '%s' "$MFI_KEY" | base64 -d > "$DIPLAY_AUTH_ASSETS_DIR/offline-mfi/identity.pk8"
+          printf '%s' "$MFI_CERT" | base64 -d > "$DIPLAY_AUTH_ASSETS_DIR/offline-mfi/certificate.p7b"
+          unset SIGNER MFI_KEY MFI_CERT
+          ./gradlew :mobile:assembleStandaloneRelease --no-daemon --no-build-cache --no-configuration-cache
+          python3 scripts/verify_okavango_apk.py mobile/build/outputs/apk/release/mobile-release.apk "$RUNNER_TEMP/okavango-dist" --authenticated
+      - name: Upload APK directly to a draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Actions artifacts of a public repository are readable by signed-in visitors.
+          # Never upload the authenticated APK with actions/upload-artifact.
+          gh release create "$RELEASE_TAG" \
+            "$RUNNER_TEMP"/okavango-dist/*.apk \
+            "$RUNNER_TEMP"/okavango-dist/*.apk.sha256 \
+            "$RUNNER_TEMP/okavango-dist/signing-cert.sha256" \
+            "$RUNNER_TEMP/okavango-dist/release.json" \
+            --repo "$REPOSITORY" --target "$SOURCE_SHA" --draft \
+            --title "DiPlay Okavango $RELEASE_TAG" --notes-file docs/RELEASE-NOTES-NEXT.md
+          url=$(gh release view "$RELEASE_TAG" --repo "$REPOSITORY" --json url --jq '.url')
+          printf '### Draft Release ready\n\n[Download the signed APK](%s) (repository write access required).\n' "$url" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove private inputs and authenticated build output
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/okavango-assets" "$RUNNER_TEMP/okavango-signing.p12" "$RUNNER_TEMP/okavango-dist"
+          rm -rf mobile/build common/build shared/build .gradle

@@ -15,12 +15,12 @@ class DiPlayAtomSourceTest {
             <feed xmlns="http://www.w3.org/2005/Atom">
               <entry>
                 <id>tag:github.com,2008:Repository/123/v0.2.35-beta</id>
-                <link rel="alternate" href="https://github.com/programmerguohuajing/DiPlay-Legacy-Android/releases/tag/v0.2.35-beta"/>
+                <link rel="alternate" href="https://github.com/DreamHoa/DiPlay-Legacy-Android/releases/tag/v0.2.35-beta"/>
                 <title>Preview</title>
               </entry>
               <entry>
                 <id>tag:github.com,2008:Repository/123/v0.2.34</id>
-                <link rel="alternate" href="https://github.com/programmerguohuajing/DiPlay-Legacy-Android/releases/tag/v0.2.34"/>
+                <link rel="alternate" href="https://github.com/DreamHoa/DiPlay-Legacy-Android/releases/tag/v0.2.34"/>
                 <title>Stable release</title>
                 <content type="html">&lt;p&gt;Fixes legacy USB&lt;/p&gt;</content>
               </entry>

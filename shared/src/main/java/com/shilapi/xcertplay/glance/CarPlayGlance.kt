@@ -1,7 +1,7 @@
 package com.shilapi.xcertplay.glance
 
-import com.shilapi.xcertplay.hud.BydHudRouteState
-import com.shilapi.xcertplay.hud.ClusterSongState
+import com.shilapi.xcertplay.navigation.RouteGuidanceState
+import com.shilapi.xcertplay.navigation.NowPlayingState
 import com.shilapi.xcertplay.iap2.wire.Iap2Frame
 
 /**
@@ -24,8 +24,8 @@ object CarPlayGlance {
         val playing: Boolean = false,
     )
 
-    private val route = BydHudRouteState()
-    private val song = ClusterSongState()
+    private val route = RouteGuidanceState()
+    private val song = NowPlayingState()
     private var connected = false
     private var last = Snapshot()
 
@@ -42,9 +42,9 @@ object CarPlayGlance {
     fun onFrame(frame: Iap2Frame) {
         val changed = synchronized(this) {
             when (frame.messageId) {
-                BydHudRouteState.ROUTE_GUIDANCE_UPDATE, BydHudRouteState.ROUTE_GUIDANCE_MANEUVER_UPDATE ->
+                RouteGuidanceState.ROUTE_GUIDANCE_UPDATE, RouteGuidanceState.ROUTE_GUIDANCE_MANEUVER_UPDATE ->
                     runCatching { route.accept(frame.messageId, frame.payload) }
-                ClusterSongState.NOW_PLAYING_UPDATE -> runCatching { song.accept(frame) }
+                NowPlayingState.NOW_PLAYING_UPDATE -> runCatching { song.accept(frame) }
                 else -> return
             }
             publishLocked()

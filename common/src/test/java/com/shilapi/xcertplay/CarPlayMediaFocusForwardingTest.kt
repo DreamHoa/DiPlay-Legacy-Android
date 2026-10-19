@@ -1,10 +1,16 @@
 package com.shilapi.xcertplay
 
+import android.app.PendingIntent
+import android.content.Intent
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.session.MediaSession
 import android.os.Looper
+import android.os.Handler
 import android.os.Build
 import android.view.Surface
+import android.view.KeyEvent
+import com.shilapi.xcertplay.airplay.CarPlayMediaButton
 import com.shilapi.xcertplay.media.AndroidMediaSink
 import com.shilapi.xcertplay.orchestration.CarPlayController
 import org.junit.After
@@ -13,6 +19,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mockito.*
+import org.mockito.ArgumentCaptor
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -53,6 +60,51 @@ class CarPlayMediaFocusForwardingTest {
         listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
         verify(sink).onMediaAudioFocusChanged(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
         verify(sink).onMediaAudioFocusChanged(AudioManager.AUDIOFOCUS_GAIN)
+    }
+
+    @Test fun activeSessionDeclaresAndForwardsHardwareTrackButtons() {
+        val controller = mock(CarPlayController::class.java).also(controllers::add)
+        val sink = spy(AndroidMediaSink()).also(sinks::add)
+        mockConstruction(MediaSession::class.java).use { construction ->
+            start(controller, sink)
+            val session = construction.constructed().single()
+            @Suppress("DEPRECATION")
+            val required = MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS
+            verify(session).setFlags(required)
+            val callback = ArgumentCaptor.forClass(MediaSession.Callback::class.java)
+            verify(session).setCallback(callback.capture(), any(Handler::class.java))
+
+            for (key in listOf(KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_PREVIOUS)) {
+                for (action in listOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
+                    callback.value.onMediaButtonEvent(Intent(Intent.ACTION_MEDIA_BUTTON)
+                        .putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(action, key)))
+                }
+            }
+            verify(controller).sendMediaButton(CarPlayMediaButton.NEXT)
+            verify(controller).sendMediaButton(CarPlayMediaButton.PREVIOUS)
+        }
+    }
+
+    @Test fun mediaButtonReceiverForwardsTrackKeysOnlyDuringAnActiveSession() {
+        val controller = mock(CarPlayController::class.java).also(controllers::add)
+        val sink = spy(AndroidMediaSink()).also(sinks::add)
+        mockConstruction(MediaSession::class.java).use { construction ->
+            start(controller, sink)
+            verify(construction.constructed().single())
+                .setMediaButtonReceiver(any(PendingIntent::class.java))
+            val receiver = LegacyMediaKeyReceiver()
+            fun button(key: Int, action: Int) = Intent(Intent.ACTION_MEDIA_BUTTON)
+                .putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(action, key))
+            receiver.onReceive(app, button(KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.ACTION_DOWN))
+            receiver.onReceive(app, button(KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.ACTION_UP))
+            receiver.onReceive(app, button(KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.ACTION_DOWN))
+            verify(controller).sendMediaButton(CarPlayMediaButton.NEXT)
+            verify(controller).sendMediaButton(CarPlayMediaButton.PREVIOUS)
+            CarPlayMediaKeys.detach(controller)
+            clearInvocations(controller)
+            receiver.onReceive(app, button(KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.ACTION_DOWN))
+            verify(controller, never()).sendMediaButton(anyInt())
+        }
     }
 
     @Test fun oldControllerAndOldRequestCallbacksCannotAffectReplacementSink() {

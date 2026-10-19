@@ -7,6 +7,34 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class Iap2WiredControlClientTest {
+    @Test fun firstAirPlayDeadlineExpiresEvenWhileControlMessagesKeepArriving() {
+        val started = 1_000_000_000L
+        for (elapsedSeconds in 0..30) {
+            val timeout = Iap2WiredControlClient.firstAirPlayPollTimeoutMillis(
+                started, 300_000, false, started + elapsedSeconds * 1_000_000_000L,
+            )
+            assertEquals((30 - elapsedSeconds) * 1000L, timeout)
+        }
+    }
+
+    @Test fun firstAirPlayDeadlineDoesNotLimitAnEstablishedSession() {
+        assertEquals(300_000L, Iap2WiredControlClient.firstAirPlayPollTimeoutMillis(
+            1_000_000_000L, 300_000, true, 99_000_000_000L,
+        ))
+        assertEquals(300_000L, Iap2WiredControlClient.firstAirPlayPollTimeoutMillis(
+            0L, 300_000, false, 99_000_000_000L,
+        ))
+    }
+
+    @Test fun firstAirPlayPollRespectsOtherDeadlinesAndNeverUsesInfiniteUsbTimeoutZero() {
+        assertEquals(100L, Iap2WiredControlClient.firstAirPlayPollTimeoutMillis(
+            1_000_000_000L, 100, false, 2_000_000_000L,
+        ))
+        assertEquals(1L, Iap2WiredControlClient.firstAirPlayPollTimeoutMillis(
+            1_000_000_000L, 100, false, 30_999_999_999L,
+        ))
+    }
+
     @Test
     fun carPlayStartSessionNestsAddressesInsideWiredAttributes() {
         val frame = Iap2WiredControlClient.carPlayStartSession(

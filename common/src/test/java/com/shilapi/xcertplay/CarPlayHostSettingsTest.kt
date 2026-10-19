@@ -222,6 +222,43 @@ class CarPlayHostSettingsTest {
         assertEquals(1, field("restartGeneration"))
     }
 
+    @Test fun wiredResolutionSaveIgnoresEmptyUnusedExistingWifiCredentials() {
+        AirPlayPersistence.saveWirelessEnabled(activity, false)
+        AirPlayPersistence.saveWirelessHotspotMode(activity, WirelessHotspotMode.EXISTING_WIFI)
+        AirPlayPersistence.saveExistingWifiCredentials(activity, "", "")
+        AirPlayPersistence.saveDisplayScalePercent(activity, 67)
+        attachController()
+        invoke("openSettingsMenu")
+        setField("displayScalePercent", 100)
+        setField("displayScaleTenths", 10)
+
+        invoke("saveSettingsAndReconnect")
+
+        assertFalse(field("menuOpen") as Boolean)
+        assertEquals(100, AirPlayPersistence.loadDisplayScalePercent(activity))
+        assertFalse(AirPlayPersistence.loadWirelessEnabled(activity))
+        assertEquals("", AirPlayPersistence.loadExistingWifiSsid(activity))
+        assertEquals("", AirPlayPersistence.loadExistingWifiPassphrase(activity))
+        assertEquals(1, field("restartGeneration"))
+    }
+
+    @Test fun wirelessResolutionSaveStillRequiresValidExistingWifiCredentials() {
+        AirPlayPersistence.saveWirelessEnabled(activity, true)
+        AirPlayPersistence.saveWirelessHotspotMode(activity, WirelessHotspotMode.EXISTING_WIFI)
+        AirPlayPersistence.saveExistingWifiCredentials(activity, "", "")
+        AirPlayPersistence.saveDisplayScalePercent(activity, 67)
+        attachController()
+        invoke("openSettingsMenu")
+        setField("displayScalePercent", 100)
+
+        invoke("saveSettingsAndReconnect")
+
+        assertTrue(field("menuOpen") as Boolean)
+        assertEquals(67, AirPlayPersistence.loadDisplayScalePercent(activity))
+        assertEquals(View.VISIBLE, (field("existingWifiErrorView") as View).visibility)
+        assertEquals(0, field("restartGeneration"))
+    }
+
     @Test fun transportLossWhileMenuIsOpenRecoversOnCancel() {
         attachController()
         invoke("openSettingsMenu")

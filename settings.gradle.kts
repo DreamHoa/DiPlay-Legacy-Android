@@ -17,7 +17,13 @@ plugins {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        google()
+        google {
+            content {
+                includeGroupByRegex("androidx\\..*")
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google\\.android.*")
+            }
+        }
         mavenCentral()
     }
 }
@@ -27,7 +33,3 @@ include(":common")
 include(":mobile")
 // include(":automotive")
 include(":shared")
-include(":maphost")
-project(":maphost").projectDir = file("samples/maphost")
-include(":home")
-project(":home").projectDir = file("samples/home")

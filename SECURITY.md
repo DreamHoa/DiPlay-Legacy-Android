@@ -1,9 +1,7 @@
 # Credentials and release packaging
 
-Public release distribution has resumed at the maintainer's request. The APK intentionally bundles the experimental accessory certificate and matching key described in docs/THIRD_PARTY_NOTICES.md. Anyone with the APK can extract them. Local compilation, Git history removal and obfuscation do not make a bundled shared key confidential or revoke previous copies.
+Source builds contain no accessory identity. Repository Secrets provision the authorized MFi key/certificate only for standalone APK packaging. Those two files are extractable from an authenticated APK; a draft Release limits access to repository collaborators. The workflow never publishes it automatically.
 
-The public Git tree and corresponding source archive exclude accessory keys and Android release-signing secrets. CI checks reject credential containers and private-key blocks in tracked files. Synthetic test identities are generated at runtime. Source builds have no automatic private-asset import; release packaging requires an explicit local directory and permits only the two expected runtime files.
+The separate Android APK-signing key is never included in an APK or Git. The public `signing-cert.sha256` contains only its certificate fingerprint. Keep the signing backup and the matching Secret; changing this key breaks upgrades.
 
-The Android APK-signing key is separate, stays local and is never bundled in the APK. Current acceptance of the experimental accessory identity does not establish Apple certification or guarantee future compatibility.
-
-Review diagnostic reports before posting. Never include credentials or pairing records in public issues. Use GitHub private vulnerability reporting for sensitive findings.
+Public-tree checks reject credential files and private-key blocks. Authenticated packaging disables Gradle configuration and output caching. Review diagnostic reports before posting them; pairing records and credentials do not belong in issues.

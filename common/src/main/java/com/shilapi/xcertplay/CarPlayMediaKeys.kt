@@ -14,7 +14,6 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaMetadata
-import android.media.RemoteControlClient
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Handler
@@ -26,7 +25,6 @@ import android.view.KeyEvent
 import androidx.core.graphics.drawable.toBitmap
 import com.shilapi.xcertplay.airplay.CarPlayMediaButton
 import com.shilapi.xcertplay.host.R
-import com.shilapi.xcertplay.hud.BydOutputSettings
 import com.shilapi.xcertplay.media.CarPlayNowPlaying
 import com.shilapi.xcertplay.orchestration.CarPlayController
 import java.util.concurrent.Executors
@@ -59,8 +57,6 @@ internal object CarPlayMediaKeys {
     private var artworkOwner: Any? = null
     private var controller: CarPlayController? = null
     private var session: MediaSession? = null
-    private var legacyClient: RemoteControlClient? = null
-    private var legacyButtons: PendingIntent? = null
     private var focusRequest: Any? = null
     private var legacyFocusListener: AudioManager.OnAudioFocusChangeListener? = null
     private var focusOwner: Any? = null
@@ -73,6 +69,16 @@ internal object CarPlayMediaKeys {
     private var artwork: Bitmap? = null
     private val artworkCache = LinkedHashMap<Int, Bitmap?>()
     private var placeholder: Bitmap? = null
+    private val geelyWheelKeys by lazy {
+        GeelyWheelKeys { index, key ->
+            val (current, context) = synchronized(this) {
+                (controller.takeIf { focusHeld && session != null }) to appContext
+            }
+            if (current != null && context != null && current.activeAirPlaySessionToken() != null && !inCall(context)) {
+                send(index, "Geely AIDL key=$key", expected = current)
+            }
+        }
+    }
 
     @Synchronized
     fun attach(context: Context, next: CarPlayController) {
@@ -217,24 +223,25 @@ internal object CarPlayMediaKeys {
         focusRequest = request
         focusHeld = granted
         if (granted) forwardGrantedFocusLocked()
-        if (Build.VERSION.SDK_INT >= 21) session = MediaSession(context, "DiPlay CarPlay").apply {
+        session = MediaSession(context, "DiPlay CarPlay").apply {
+            // API 21-25 routes hardware media keys only to sessions declaring these capabilities.
+            @Suppress("DEPRECATION")
+            setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
+            // The Geely E01 input service targets the framework-selected media-button receiver.
+            val keyIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
+                .setComponent(ComponentName(context, LegacyMediaKeyReceiver::class.java))
+            val keyFlags = PendingIntent.FLAG_UPDATE_CURRENT or
+                (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+            setMediaButtonReceiver(PendingIntent.getBroadcast(context, 0, keyIntent, keyFlags))
             setCallback(callback, mainHandler)
             setMetadata(androidMetadata(nowPlaying, shownArtworkLocked()))
             isActive = true
         }
-        else {
-            val intent = Intent(Intent.ACTION_MEDIA_BUTTON).setComponent(ComponentName(context, LegacyMediaKeyReceiver::class.java))
-            val flags = if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
-            val buttons = PendingIntent.getBroadcast(context, 0, intent, flags)
-            legacyButtons = buttons
-            audio?.registerMediaButtonEventReceiver(buttons)
-            legacyClient = RemoteControlClient(buttons).also {
-                it.setTransportControlFlags(RemoteControlClient.FLAG_KEY_MEDIA_PLAY_PAUSE or
-                    RemoteControlClient.FLAG_KEY_MEDIA_NEXT or RemoteControlClient.FLAG_KEY_MEDIA_PREVIOUS)
-                audio?.registerRemoteControlClient(it)
-            }
-        }
         Log.i(TAG, "media keys active focusGranted=$granted")
+        if (OkavangoProfile.matches(Build.VERSION.SDK_INT, Build.MODEL, Build.HARDWARE, Build.DEVICE)) {
+            // Bind outside the media-key monitor; the vendor calls back synchronously over Binder.
+            mainHandler.post { geelyWheelKeys.ensureBound(context) }
+        }
     }
 
     private fun forwardGrantedFocusLocked() {
@@ -287,10 +294,6 @@ internal object CarPlayMediaKeys {
             @Suppress("DEPRECATION")
             appContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         }
-        legacyClient?.let { audio?.unregisterRemoteControlClient(it) }
-        legacyButtons?.let { audio?.unregisterMediaButtonEventReceiver(it) }
-        legacyClient = null
-        legacyButtons = null
         if (Build.VERSION.SDK_INT >= 26) focusRequest?.let { audio?.abandonAudioFocusRequest(it as AudioFocusRequest) }
         else legacyFocusListener?.let {
             @Suppress("DEPRECATION")
@@ -307,10 +310,6 @@ internal object CarPlayMediaKeys {
         } else {
             mediaAudioActive
         }
-        if (Build.VERSION.SDK_INT < 21) {
-            legacyClient?.setPlaybackState(if (playing) RemoteControlClient.PLAYSTATE_PLAYING else RemoteControlClient.PLAYSTATE_PAUSED)
-            return
-        }
         session?.setPlaybackState(
             PlaybackState.Builder()
                 .setActions(ACTIONS)
@@ -326,7 +325,10 @@ internal object CarPlayMediaKeys {
         )
     }
 
-    private fun send(index: Int, source: String) {
+    private fun send(index: Int, source: String, expected: CarPlayController? = null) {
+        if (expected != null && synchronized(this) {
+            controller !== expected || !focusHeld || session == null
+        }) return
         // While the car's video player is on screen the wheel drives it: a CarPlay play/pause would
         // make the iPhone end the video session.
         if (CarPlayVideo.onMediaKey(index)) {
@@ -338,12 +340,13 @@ internal object CarPlayMediaKeys {
     }
 
     private val callback by lazy { if (Build.VERSION.SDK_INT >= 21) CarPlayMediaCallback(
-        experimentalDiLink3Keys = { appContext?.let(BydOutputSettings::carPlayCallControls) == true },
-        send = ::send,
+        send = { index, source -> send(index, source) },
     ) else null }
 
     fun onLegacyMediaButton(intent: Intent) {
-        if (Build.VERSION.SDK_INT >= 21 || intent.action != Intent.ACTION_MEDIA_BUTTON) return
+        if (intent.action != Intent.ACTION_MEDIA_BUTTON) return
+        // API 21+ receiver is only a fallback for an active CarPlay media session.
+        if (Build.VERSION.SDK_INT >= 21 && synchronized(this) { session == null }) return
         val event = intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return
         if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return
         val index = CarPlayMediaButton.forKeyCode(event.keyCode) ?: return
@@ -448,13 +451,12 @@ class LegacyMediaKeyReceiver : BroadcastReceiver() {
  */
 @androidx.annotation.RequiresApi(21)
 internal class CarPlayMediaCallback(
-    private val experimentalDiLink3Keys: () -> Boolean = { false },
     private val send: (index: Int, source: String) -> Unit,
 ) : MediaSession.Callback() {
     override fun onMediaButtonEvent(mediaButtonIntent: Intent): Boolean {
         @Suppress("DEPRECATION")
         val event = mediaButtonIntent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return false
-        val index = CarPlayMediaButton.forKeyCode(event.keyCode, experimentalDiLink3Keys())
+        val index = CarPlayMediaButton.forKeyCode(event.keyCode)
             ?: return super.onMediaButtonEvent(mediaButtonIntent)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
             send(index, KeyEvent.keyCodeToString(event.keyCode))

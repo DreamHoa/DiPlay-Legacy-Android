@@ -55,11 +55,7 @@ internal class OpusEncoder(bitrate: Int) : Closeable {
         }
         if (inputIndex >= 0) {
             @Suppress("DEPRECATION")
-            val input = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                codec.getInputBuffer(inputIndex)
-            } else {
-                codec.inputBuffers[inputIndex]
-            }
+            val input = codec.getInputBuffer(inputIndex)
             if (input == null || pcm.size > input.remaining()) {
                 codec.queueInputBuffer(inputIndex, 0, 0, presentationTimeUs, 0)
             } else {
@@ -97,11 +93,7 @@ internal class OpusEncoder(bitrate: Int) : Closeable {
                         continue
                     }
                     @Suppress("DEPRECATION")
-                    val buffer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                        codec.getOutputBuffer(index)
-                    } else {
-                        codec.outputBuffers[index]
-                    }
+                    val buffer = codec.getOutputBuffer(index)
                     if (buffer != null && bufferInfo.size > 0) {
                         val bytes = ByteArray(bufferInfo.size)
                         buffer.position(bufferInfo.offset)

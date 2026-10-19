@@ -53,7 +53,10 @@ class CarPlayRuntimeConfig(
     val hostMac: ByteArray = DEFAULT_HOST_MAC,
     val linkLocal: String = "fe80::2",
     val identification: Iap2IdentificationConfig,
-    val availableCurrentMilliAmps: Int = 2400,
+    // Advertise a conservative USB 2.0 budget, not an unverified 2.4 A charging supply.
+    // This is an iAP2 announcement; it does not measure or control the port's current.
+    // A deployment may explicitly override it after verifying its USB power capability.
+    val availableCurrentMilliAmps: Int = 500,
     val label: String = "xcertplay",
     val hostName: String = "xcertplay",
     val transport: CarPlayTransport = CarPlayTransport.WIRED,

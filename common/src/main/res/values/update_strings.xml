@@ -6,12 +6,10 @@
     <string name="update_check_now">Check for updates</string>
     <string name="update_checking">Checking for updates…</string>
     <string name="update_up_to_date">You are using the latest version.</string>
-    <string name="update_available">DiPlay %1$s is available</string>
     <string name="update_no_notes">No release notes are available.</string>
     <string name="update_parked_notice">Park safely and disconnect CarPlay before installing. Android will ask you to confirm installation.</string>
     <string name="update_download">Download update</string>
     <string name="update_downloading">Downloading and verifying APK…</string>
-    <string name="update_install_title">Install DiPlay %1$s</string>
     <string name="update_install_notice">The downloaded APK has passed SHA-256, package-name and signing-certificate verification. Open the Android installer now?</string>
     <string name="update_install">Open installer</string>
     <string name="update_permission_title">Allow installing updates</string>

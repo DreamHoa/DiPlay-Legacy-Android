@@ -1,0 +1,106 @@
+name: Retire legacy public credential artifacts
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/retire-public-apks.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retire-legacy-okavango-artifacts
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      # No checkout, signing inputs or MFi Secrets: only move already-existing files.
+      - name: Preserve legacy APKs in a draft, then remove public copies and old Gradle caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import tempfile
+          import zipfile
+
+          repo = os.environ['REPOSITORY']
+          tag = 'legacy-car-test-backup'
+          names = {'okavango-mfi-test', 'okavango-installable-release'}
+
+          def gh(*args, **kwargs):
+              return subprocess.run(['gh', *args], check=True, **kwargs)
+
+          def pages(path):
+              result = gh('api', '--paginate', '--slurp', f'repos/{repo}/{path}',
+                          stdout=subprocess.PIPE, text=True)
+              return json.loads(result.stdout)
+
+          artifacts = [a for page in pages('actions/artifacts?per_page=100')
+                       for a in page['artifacts'] if a['name'] in names and not a['expired']]
+          if artifacts:
+              releases = [r for page in pages('releases?per_page=100') for r in page]
+              release = next((r for r in releases if r['tag_name'] == tag), None)
+              if release is None:
+                  gh('release', 'create', tag, '--repo', repo, '--target', os.environ['SOURCE_SHA'],
+                     '--draft', '--title', 'Legacy Okavango car-test APK backups',
+                     '--notes', 'Original APK archives moved out of public Actions artifacts. '
+                                'These retain their original signatures and are historical test builds. '
+                                'They contain extractable authentication material. Keep this Release a draft.')
+                  release = next(r for page in pages('releases?per_page=100')
+                                 for r in page if r['tag_name'] == tag)
+              if not release['draft']:
+                  raise SystemExit('Refusing to upload private backups to a published Release.')
+              existing = {a['name'] for a in release['assets']}
+              with tempfile.TemporaryDirectory(prefix='okavango-legacy-') as directory:
+                  work = Path(directory)
+                  verified = work / 'verified'
+                  verified.mkdir()
+                  for artifact in artifacts:
+                      identity = artifact['id']
+                      run = artifact.get('workflow_run', {}).get('id', 'unknown')
+                      name = f'{artifact["name"]}-run-{run}-artifact-{identity}.zip'
+                      archive = work / name
+                      with archive.open('wb') as output:
+                          gh('api', f'repos/{repo}/actions/artifacts/{identity}/zip', stdout=output)
+                      with zipfile.ZipFile(archive) as package:
+                          if package.testzip() is not None or not any(n.endswith('.apk') for n in package.namelist()):
+                              raise SystemExit('Legacy artifact is not a valid APK archive; preserving the original.')
+                      # Recheck before every upload; never fall through to a published Release.
+                      current = gh('release', 'view', tag, '--repo', repo, '--json', 'isDraft',
+                                   stdout=subprocess.PIPE, text=True)
+                      if not json.loads(current.stdout)['isDraft']:
+                          raise SystemExit('Backup Release is no longer a draft; stopping.')
+                      if name not in existing:
+                          gh('release', 'upload', tag, str(archive), '--repo', repo)
+                      gh('release', 'download', tag, '--repo', repo, '--pattern', name, '--dir', str(verified))
+                      digest = lambda p: hashlib.file_digest(p.open('rb'), 'sha256').hexdigest()
+                      if digest(archive) != digest(verified / name):
+                          raise SystemExit('Backup byte verification failed; preserving the public original.')
+                      gh('api', '--method', 'DELETE', f'repos/{repo}/actions/artifacts/{identity}')
+                      print(f'Artifact {identity}: private draft backup verified; public artifact removed.')
+          else:
+              print('No unexpired legacy credential artifacts remain.')
+
+          # The retired authenticated debug workflow could cache package task outputs.
+          # Retain public Robolectric jars; discard legacy Gradle state and rebuild it from source.
+          caches = [cache for page in pages('actions/caches?per_page=100')
+                    for cache in page['actions_caches'] if cache['key'].startswith('gradle-')]
+          for cache in caches:
+              gh('api', '--method', 'DELETE', f'repos/{repo}/actions/caches/{cache["id"]}')
+          print(f'Removed {len(caches)} Gradle caches; future source-only checks can repopulate them.')
+          PY

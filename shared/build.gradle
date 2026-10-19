@@ -6,17 +6,17 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        minSdk = 19
+        minSdk = 22
         targetSdk = 37
         multiDexEnabled true
 
         ndk {
-            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86'
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
         }
 
         externalNativeBuild {
             ndkBuild {
-                arguments 'APP_PLATFORM=android-19'
+                arguments 'APP_PLATFORM=android-22'
                 if (org.gradle.internal.os.OperatingSystem.current().isWindows()) {
                     arguments 'HOST_OS=windows'
                 }
@@ -25,7 +25,7 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
-    // NDK r25c is the last supported toolchain that still targets Android 4.4 (API 19).
+    // Retain the proven native toolchain; only the Android API floor and ARM ABIs change.
     ndkVersion = '25.2.9519653'
     externalNativeBuild {
         ndkBuild {

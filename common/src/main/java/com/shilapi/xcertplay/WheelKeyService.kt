@@ -20,8 +20,7 @@ import com.shilapi.xcertplay.airplay.AirPlayKnobState
 import com.shilapi.xcertplay.airplay.CarPlayMediaButton
 import com.shilapi.xcertplay.glance.CarPlayGlance
 import com.shilapi.xcertplay.host.R
-import com.shilapi.xcertplay.hud.BydNavigationOutputs
-import com.shilapi.xcertplay.hud.BydOutputSettings
+import com.shilapi.xcertplay.navigation.CarPlayCallMonitor
 
 /**
  * Optional: steering-wheel keys zoom CarPlay's dashboard map and work as a CarPlay joystick. BYD's window
@@ -32,8 +31,7 @@ import com.shilapi.xcertplay.hud.BydOutputSettings
  * to map zoom until it is pressed again, or, in the timed behaviour, until a few seconds after the last
  * zoom. With the joystick setting on, the joystick key (BYD's media key by default) turns the joystick on
  * and off; while it is on the keys drive CarPlay's main screen as a car's rotary knob would (see
- * [WheelJoystick]). A call always keeps the keys for the call. During a CarPlay call the call key answers on
- * the iPhone (see [CarPlayCallKeys]), and with a CarPlay session DiLink 3's CarPlay voice keys open Siri.
+ * [WheelJoystick]). The service leaves other keys to the vehicle when no enabled role consumes them.
  * With the Siri key setting on, a key the user assigns opens Siri while CarPlay is connected.
  * Every other key passes on unchanged. On
  * the Tang the console's volume sends the same codes as the wheel's, so it zooms and moves too.
@@ -85,7 +83,6 @@ class WheelKeyService : AccessibilityService() {
 
     override fun onServiceConnected() {
         running = this
-        CarPlayCallKeys.install(this)
         refreshEligibility()
         handler.removeCallbacks(pollEligibility)
         handler.postDelayed(pollEligibility, ELIGIBILITY_POLL_MILLIS)
@@ -127,12 +124,6 @@ class WheelKeyService : AccessibilityService() {
             keys.onKey(null, down, event.repeatCount == 0, eligibleRoute() != null, calling,
                 physicalKey = physicalKey)
             rearmTimedMode()
-            return true
-        }
-        if (CarPlayCallKeys.onKey(this, event.keyCode, down)) return true
-        if (BydOutputSettings.carPlayCallControls(this) &&
-            CarPlayMediaButton.opensSiriWhileCarPlay(event.keyCode) && session() != null) {
-            if (!down) Log.i(TAG, "CarPlay voice key ${event.keyCode}: Siri sent=${CarPlayBackgroundSession.snapshot()?.controller?.requestSiri() == true}")
             return true
         }
         val key = WheelKey.of(event)
@@ -260,7 +251,6 @@ class WheelKeyService : AccessibilityService() {
             if (on) Toast.makeText(this, "$text\n${getString(R.string.wheel_joystick_hint)}", Toast.LENGTH_LONG).show()
             else Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
         }
-        BydNavigationOutputs.dashboardNote(text)
     }
 
     private fun clearLearning(notify: Boolean = true) {
@@ -297,9 +287,7 @@ class WheelKeyService : AccessibilityService() {
             Toast.makeText(this, if (zoomOn) R.string.wheel_zoom_mode_on else R.string.wheel_zoom_mode_off, Toast.LENGTH_SHORT).show()
         }
         if (zoomOn) {
-            BydNavigationOutputs.dashboardNote("🔍 ${getString(R.string.wheel_zoom_note_zoom)}", ZOOM_NOTE_SOURCE)
         } else {
-            BydNavigationOutputs.dashboardNote("🔊 ${getString(R.string.wheel_zoom_note_volume)}")
         }
     }
 
@@ -395,8 +383,7 @@ class WheelKeyService : AccessibilityService() {
          * The call controls need the service too: outside the CarPlay screen the call key reaches DiPlay
          * only through it, and without it BYD's window manager opens its own phone app instead.
          */
-        internal fun wanted(context: Context): Boolean = WheelZoomSettings.anyEnabled(context) ||
-            BydOutputSettings.carPlayCallControls(context)
+        internal fun wanted(context: Context): Boolean = WheelZoomSettings.anyEnabled(context)
 
         /**
          * Android takes the service off the allowed list when the app is force-stopped (BYD's system does
@@ -445,7 +432,7 @@ class WheelKeyService : AccessibilityService() {
 // CarPlay's iAP2 call state can be active even when the head unit leaves Android's mode normal.
 // Native Bluetooth calls also use a call/communication audio mode.
 internal fun inCall(context: Context): Boolean =
-    BydNavigationOutputs.carPlayCall() != null ||
+    CarPlayCallMonitor.current() != null ||
         (context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.mode.let { it != null && it != AudioManager.MODE_NORMAL }
 
 /** Use the input-device ID for a held press; saved assignments still use the stable device name. */
