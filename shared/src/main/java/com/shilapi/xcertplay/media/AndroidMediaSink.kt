@@ -780,6 +780,7 @@ private class VideoDecoder(
     private var duplicateConfigLogged = false
     private var failureReports = 0
     private val referenceChain = VideoReferenceChain()
+    private val videoBufferInfo = MediaCodec.BufferInfo()
     private var lastKeyFrameRequestNs = 0L
     // The main screen keeps the historical log format; other screens are labelled.
     private val stats = VideoStats(statsLabel ?: if (streamType == MAIN_SCREEN_TYPE) "" else " stream=$streamType")
@@ -1081,11 +1082,10 @@ private class VideoDecoder(
     }
 
     private fun feed(nalus: ByteArray, presentNs: Long = 0L) {
-        val annexB = MediaCodecSupport.toAnnexB(nalus)
         val config = lastConfig ?: return
         if (outputSurface == null) return
-        if (annexB.isEmpty()) { recover("invalid video access unit"); return }
-        if (!referenceChain.accepts(annexB, config.codec)) {
+        if (nalus.isEmpty()) { recover("invalid video access unit"); return }
+        if (!referenceChain.accepts(nalus, config.codec)) {
             requestKeyFrameIfDue()
             return
         }
@@ -1095,7 +1095,7 @@ private class VideoDecoder(
             submittedFrameLogged = true
             Log.i(
                 TAG,
-                "video decoder first input avcc=${nalus.size} annexB=${annexB.size}",
+                "video decoder first input avcc=${nalus.size}",
             )
         }
         val index = VideoInputPump.acquire(
@@ -1107,11 +1107,11 @@ private class VideoDecoder(
         val input = codec.getInputBuffer(index)
         checkNotNull(input) { "Decoder input buffer unavailable" }
         input.clear()
-        if (annexB.size <= input.remaining()) {
-            input.put(annexB)
+        val written = MediaCodecSupport.writeAnnexB(nalus, input)
+        if (written > 0) {
             // A paced frame carries its local time; MediaCodec returns it with the decoded output.
             val presentationUs = if (presentNs > 0) presentNs / 1000 else System.nanoTime() / 1000
-            codec.queueInputBuffer(index, 0, annexB.size, presentationUs, 0)
+            codec.queueInputBuffer(index, 0, written, presentationUs, 0)
             val queuedNow = System.nanoTime()
             if (lastQueuedNanos != 0L && queuedNow - lastQueuedNanos > STILL_GAP_NS) resumedAtNanos = queuedNow
             lastQueuedNanos = queuedNow
@@ -1158,7 +1158,7 @@ private class VideoDecoder(
         queuedPresentationUs.indices.firstOrNull { queuedPresentationUs[it] == presentationUs } ?: -1
 
     private fun drainOutput(codec: MediaCodec) {
-        val info = MediaCodec.BufferInfo()
+        val info = videoBufferInfo
         while (running) {
             val index = codec.dequeueOutputBuffer(info, 0)
             when {
@@ -1304,6 +1304,10 @@ private class AudioRenderer(
     @Volatile private var running = true
     @Volatile private var started = false
     private var codec: MediaCodec? = null
+    private var codecMime: String? = null
+    private var codecCreateRetries = 0
+    private var lastCodecRetryNs = 0L
+    private val audioBufferInfo = MediaCodec.BufferInfo()
     private var track: AudioTrack? = null
     private var pcm = ByteArray(64 * 1024)
     private var playbackStarted = false
@@ -1422,6 +1426,27 @@ private class AudioRenderer(
     }
 
     private fun configureCodec(mime: String) {
+        if (codec != null) return
+        codecMime = mime
+        codec = createConfiguredAudioDecoder(mime, software = false)
+        if (codec == null && mime == MediaFormat.MIMETYPE_AUDIO_OPUS) {
+            report("Audio: platform Opus decoder unavailable; trying software decoder")
+            codec = createConfiguredAudioDecoder(mime, software = true)
+        }
+    }
+
+    private fun retryAudioDecoderIfDue() {
+        val mime = codecMime ?: return
+        if (codecCreateRetries >= MAX_DECODER_CREATE_RETRIES) return
+        val now = System.nanoTime()
+        if (lastCodecRetryNs != 0L && now - lastCodecRetryNs < DECODER_CREATE_RETRY_INTERVAL_NS) return
+        lastCodecRetryNs = now
+        codecCreateRetries++
+        report("Audio: retry decoder create attempt=$codecCreateRetries mime=$mime")
+        configureCodec(mime)
+    }
+
+    private fun createConfiguredAudioDecoder(mime: String, software: Boolean): MediaCodec? {
         diagnosticStage = "decoder-format"
         val mediaFormat = MediaFormat().apply {
             setString(MediaFormat.KEY_MIME, mime)
@@ -1444,9 +1469,22 @@ private class AudioRenderer(
                     "csd0=${aacAudioSpecificConfig().toHexString()}",
             )
         }
-        codec = try {
+        return try {
             MediaCodecStartup.create(
-                create = { diagnosticStage = "decoder-create"; MediaCodec.createDecoderByType(mime) },
+                create = {
+                    diagnosticStage = "decoder-create"
+                    if (!software) {
+                        MediaCodec.createDecoderByType(mime)
+                    } else {
+                        // API 22 supports software OMX, but not CodecInfo.isSoftwareOnly.
+                        val name = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+                            .firstOrNull { !it.isEncoder &&
+                                it.name.startsWith("OMX.google.", ignoreCase = true) &&
+                                it.supportedTypes.any { type -> type.equals(mime, ignoreCase = true) } }
+                            ?.name ?: throw java.io.IOException("No software decoder for $mime")
+                        MediaCodec.createByCodecName(name)
+                    }
+                },
                 configure = { diagnosticStage = "decoder-configure"; it.configure(mediaFormat, null, null, 0) },
                 start = { diagnosticStage = "decoder-start"; it.start() },
                 release = { it.release() },
@@ -1459,8 +1497,8 @@ private class AudioRenderer(
                 }
             }
         } catch (error: Exception) {
-            Log.e(TAG, "audio decoder configuration failed mime=$mime", error)
-            reportFailure(error)
+            Log.w(TAG, "audio decoder configuration failed mime=$mime software=$software", error)
+            report("Audio: decoder unavailable mime=$mime software=$software reason=${error.javaClass.simpleName}")
             null
         }
     }
@@ -1784,7 +1822,11 @@ private class AudioRenderer(
         (sample.toLong() and 0xffff_ffffL) * 1_000_000L / format.sampleRate
 
     private fun feedCodec(payload: ByteArray, presentationTimeUs: Long) {
-        val codec = codec ?: run { decoderUnavailablePackets++; return }
+        val codec = codec ?: run {
+            decoderUnavailablePackets++
+            retryAudioDecoderIfDue()
+            return
+        }
         diagnosticStage = "decoder-input"
         // Upstream #381: while a blocking track write holds this thread, decoded output fills
         // up and the decoder stops taking input. Dropping the packet after one 10 ms wait cut
@@ -1827,7 +1869,7 @@ private class AudioRenderer(
 
     private fun drainCodec(codec: MediaCodec) {
         diagnosticStage = "decoder-output"
-        val info = MediaCodec.BufferInfo()
+        val info = audioBufferInfo
         while (running) {
             diagnosticStage = "decoder-output"
             val index = codec.dequeueOutputBuffer(info, 0)
@@ -2113,6 +2155,8 @@ private class AudioRenderer(
         const val OPUS_SEEK_PRE_ROLL_NANOS = 80_000_000L
         const val INPUT_TIMEOUT_US = 10_000L
         const val AUDIO_POLL_MILLIS = 10L
+        const val MAX_DECODER_CREATE_RETRIES = 5
+        const val DECODER_CREATE_RETRY_INTERVAL_NS = 1_000_000_000L
         const val BUFFER_TAIL_WAIT_NS = 500_000_000L
         // Holds a burst after a Wi-Fi gap (~4 s of AAC) instead of dropping it.
         const val MAX_QUEUED_PACKETS = 192
