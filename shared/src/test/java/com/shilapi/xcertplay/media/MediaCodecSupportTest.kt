@@ -2,6 +2,7 @@ package com.shilapi.xcertplay.media
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import java.nio.ByteBuffer
 import org.junit.Test
 import com.shilapi.xcertplay.airplay.VideoCodec
 import org.junit.Assert.assertTrue
@@ -81,5 +82,26 @@ class MediaCodecSupportTest {
             cursor += parameterSet.size
         }
         return record
+    }
+
+    @Test fun directAnnexBWriterWritesAndChecksCapacity() {
+        val input = byteArrayOf(0, 0, 0, 2, 0x65, 1, 0, 0, 0, 2, 0x41, 2)
+        val dst = ByteBuffer.allocateDirect(100)
+        val written = MediaCodecSupport.writeAnnexB(input, dst)
+        org.junit.Assert.assertEquals(12, written)
+        dst.flip()
+        val bytes = ByteArray(written)
+        dst.get(bytes)
+        org.junit.Assert.assertArrayEquals(byteArrayOf(0, 0, 0, 1, 0x65, 1, 0, 0, 0, 1, 0x41, 2), bytes)
+        org.junit.Assert.assertEquals(-1, MediaCodecSupport.writeAnnexB(input, ByteBuffer.allocate(3)))
+    }
+
+    @Test fun randomAccessDetectionSupportsLengthPrefixedPackets() {
+        org.junit.Assert.assertTrue(MediaCodecSupport.isRandomAccessLengthPrefixed(
+            byteArrayOf(0, 0, 0, 2, 0x65, 1), com.shilapi.xcertplay.airplay.VideoCodec.H264,
+        ))
+        org.junit.Assert.assertFalse(MediaCodecSupport.isRandomAccessLengthPrefixed(
+            byteArrayOf(0, 0, 0, 2, 0x41, 1), com.shilapi.xcertplay.airplay.VideoCodec.H264,
+        ))
     }
 }

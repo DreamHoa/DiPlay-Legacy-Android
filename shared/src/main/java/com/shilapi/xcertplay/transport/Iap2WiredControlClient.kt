@@ -37,6 +37,7 @@ class Iap2WiredControlClient(
          * instead of idling until the USB stack wedges. Defaults to disabled.
          */
         airPlayTcpArrived: () -> Boolean = { true },
+        startSessionAgain: () -> StartAgain = { StartAgain.DONE },
     ): Iap2WiredControlResult {
         require(availableCurrentMilliAmps in 0..0xffff) {
             "availableCurrentMilliAmps must be in 0..65535"
@@ -66,6 +67,7 @@ class Iap2WiredControlClient(
         var forwardedFrames = 0
         var carPlayStartSessions = 0
         var startSessionNanos = 0L
+        var startAgainDecided = false
         // Quiet CSM traffic is diagnostic, not proof that the AirPlay session is dead.
         // The Okavango's working wired session can go minutes without another CSM frame.
         val silenceMonitor = Iap2PeerSilenceMonitor(peerIdleDiagnosticMillis)
@@ -81,6 +83,22 @@ class Iap2WiredControlClient(
                 }
                 location.tick { send(it, deadlineNanos) }
                 vehicleStatus.tick { send(it, deadlineNanos) }
+                // Only retry a previously sent session request if USB came up late and the
+                // iPhone has not attempted our AirPlay listener since the link opened.
+                var startAgainPending = false
+                if (!startAgainDecided && stage == Iap2WiredControlStage.CARPLAY_START_SENT) {
+                    when (startSessionAgain()) {
+                        StartAgain.WAIT -> startAgainPending = true
+                        StartAgain.DONE -> startAgainDecided = true
+                        StartAgain.SEND -> {
+                            startAgainDecided = true
+                            send(carPlayStartSession(endpoint), deadlineNanos)
+                            carPlayStartSessions++
+                            startSessionNanos = System.nanoTime()
+                            onProgress(START_SESSION_AGAIN_PROGRESS)
+                        }
+                    }
+                }
                 val startupRemaining = if (carPlayStartSessions == 0) {
                     ((startupDeadlineNanos - System.nanoTime()) / NANOS_PER_MILLISECOND).coerceAtLeast(0L)
                 } else remaining
@@ -99,7 +117,9 @@ class Iap2WiredControlClient(
                         Iap2WiredControlTerminal.NO_AIRPLAY_TCP, stage, forwardedFrames, carPlayStartSessions,
                     )
                 }
-                val pollTimeout = vehicleStatus.pollTimeout(location.pollTimeout(firstTcpPollTimeout))
+                val pollTimeout = vehicleStatus.pollTimeout(location.pollTimeout(firstTcpPollTimeout)).let {
+                    if (startAgainPending) minOf(it, START_AGAIN_POLL_MILLIS) else it
+                }
                 val incoming = try {
                     session.recv(pollTimeout)
                 } catch (failure: IOException) {
@@ -174,8 +194,14 @@ class Iap2WiredControlClient(
         session.send(frame, requireRemaining(deadlineNanos))
     }
 
+    /** Late NCM readiness can require one second CarPlayStartSession request. */
+    enum class StartAgain { WAIT, SEND, DONE }
+
     companion object {
         const val NO_TIMEOUT_MILLIS = Long.MAX_VALUE
+        const val START_SESSION_AGAIN_PROGRESS =
+            "iap2 tx=0x4301 carplay-start-session again: no AirPlay connection since USB link opened"
+        private const val START_AGAIN_POLL_MILLIS = 500L
         private const val CARPLAY_AVAILABILITY = 0x4300
         private const val CARPLAY_START_SESSION = 0x4301
         private const val STARTUP_AVAILABILITY_TIMEOUT_MILLIS = 60_000L

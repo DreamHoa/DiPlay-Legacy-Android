@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothHeadset
 import android.bluetooth.BluetoothProfile
 import com.shilapi.xcertplay.compat.BluetoothCompat
+import com.shilapi.xcertplay.media.TouchDispatchQueue
 import com.shilapi.xcertplay.media.musicVolumeWarning
 import com.shilapi.xcertplay.bluetooth.BluetoothAddressResolver
 import com.shilapi.xcertplay.bluetooth.CarPlayBluetoothManager
@@ -226,6 +227,21 @@ class CarPlayController(
     @Volatile private var mux: Iap2UsbMuxHost? = null
     @Volatile private var csm: Iap2Session? = null
     @Volatile private var activeSession: AirPlaySession? = null
+
+    private data class QueuedTouch(
+        val session: AirPlaySession,
+        val contacts: List<AirPlayContact>,
+        val originNs: Long,
+    )
+
+    // Bound queued MOVE events without changing pointer boundaries or ordered HID delivery.
+    private val touchDispatch = TouchDispatchQueue<QueuedTouch>(
+        executor = touchExecutor,
+    ) { packet, _ ->
+        if (!closed && activeSession === packet.session) {
+            packet.session.sendTouch(packet.contacts, packet.originNs)
+        }
+    }
     @Volatile private var requestedDashboardUrl: String? = airPlayConfig.cluster?.initialUrl
     private val clusterUiLock = Any()
     private var clusterUiStream: Pair<AirPlaySession, Int>? = null
@@ -308,6 +324,7 @@ class CarPlayController(
                     debugLog("video in car session allowed=${VideoInCar.allowed} delivery=$delivery")
                 }
             }
+            if (replacement) touchDispatch.clear()
             activeSession = session
             if (replacement) restoreDashboardContent(session)
             // Issue #95: wired first-TCP watchdog — a session only becomes active after the
@@ -343,6 +360,7 @@ class CarPlayController(
         override fun onSessionEnded(session: AirPlaySession) {
             if (activeSession === session) {
                 activeSession = null
+                touchDispatch.clear()
                 CarPlayCallMonitor.clear()
                 com.shilapi.xcertplay.glance.CarPlayGlance.setConnected(false)
                 videoListener?.onVideoSessionEnded()
@@ -502,15 +520,15 @@ class CarPlayController(
         }
     }
 
-    fun sendTouch(contacts: List<AirPlayContact>): Boolean {
+    /** Only MOVE packets may be coalesced. Press, pointer changes and release retain their order. */
+    fun sendTouch(contacts: List<AirPlayContact>, move: Boolean = false, originNs: Long = 0L): Boolean {
         if (closed) return false
         val session = activeSession ?: return false
-        return try {
-            touchExecutor.execute { session.sendTouch(contacts) }
-            true
-        } catch (_: Exception) {
-            false
-        }
+        return touchDispatch.offer(
+            QueuedTouch(session, contacts.toList(), originNs),
+            session,
+            move,
+        )
     }
 
     /** Moves CarPlay on the main screen to its declared view area [index], for example another dock edge. */
@@ -648,6 +666,7 @@ class CarPlayController(
         availabilityPollGeneration.incrementAndGet()
         wirelessGeneration.incrementAndGet()
         permissionPollGeneration += 1
+        touchDispatch.clear()
         touchExecutor.shutdownNow()
         tunnelExecutor.shutdownNow()
         val service = vpnService
@@ -2302,6 +2321,7 @@ class CarPlayController(
                     "location=${config.identification.locationInformationEnabled} " +
                     "vehicleStatus=${config.identification.vehicleStatusEnabled}",
             )
+            val firstStartSentAtNs = java.util.concurrent.atomic.AtomicLong(0L)
             val result = Iap2WiredControlClient(csm, Iap2MfiAuthenticationClient(mfi)).run(
                 identification = config.identification,
                 endpoint = endpoint,
@@ -2310,8 +2330,26 @@ class CarPlayController(
                 locationProvider = locationProvider,
                 vehicleStatusProvider = vehicleStatusProvider,
                 onIncoming = ::onRouteFrame,
-                onProgress = ::onWiredControlProgress,
+                onProgress = { message ->
+                    if (message == "iap2 tx=0x4301 carplay-start-session") {
+                        firstStartSentAtNs.compareAndSet(0L, System.nanoTime())
+                    }
+                    onWiredControlProgress(message)
+                },
                 airPlayTcpArrived = { wiredTcpArrived.get() },
+                startSessionAgain = {
+                    val firstSent = firstStartSentAtNs.get()
+                    if (firstSent == 0L) Iap2WiredControlClient.StartAgain.DONE
+                    else WiredStartAgain.decide(
+                        nowNanos = System.nanoTime(),
+                        startSentAtNanos = firstSent,
+                        linkOpenedAtNanos = ncm.linkOpenedAtNanos,
+                        sessionActive = wiredTcpArrived.get(),
+                        connectionAttemptSinceLinkOpened = ncm.linkOpenedAtNanos?.let {
+                            ncm.connectionAttemptSince(endpoint.airPlayPort, it)
+                        } ?: false,
+                    )
+                },
             )
             onStatus(
                 when (result.terminal) {

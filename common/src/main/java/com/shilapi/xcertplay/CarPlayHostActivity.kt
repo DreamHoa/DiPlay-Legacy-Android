@@ -4356,7 +4356,14 @@ class CarPlayHostActivity : ComponentActivity() {
             return true
         }
         val contacts = CarPlayTouchMapper.contacts(event, content)
-        val queued = controller?.sendTouch(contacts) ?: false
+        // MotionEvent uses the uptime clock, not System.nanoTime.
+        val ageMs = android.os.SystemClock.uptimeMillis() - event.eventTime
+        val originNs = if (event.eventTime > 0L && ageMs in 0L..500L) {
+            System.nanoTime() - ageMs * 1_000_000L
+        } else 0L
+        val queued = controller?.sendTouch(
+            contacts, event.actionMasked == MotionEvent.ACTION_MOVE, originNs,
+        ) ?: false
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN,
             MotionEvent.ACTION_POINTER_DOWN,

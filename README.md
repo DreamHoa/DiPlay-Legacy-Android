@@ -29,7 +29,7 @@ BYD vehicle-data probes, HUD/cluster writers, instrument-display routing and the
 
 ## Build and release
 
-Current release line: **0.3.1 / versionCode 73**. Package: `com.shihab.diplay.okavango`.
+Current release line: **0.3.2 / versionCode 74**. Package: `com.shihab.diplay.okavango`.
 All modules target minimum API22; native libraries are ARMv7 and ARM64 only.
 
 Push and PR workflows run unit tests, lint and source compilation without private inputs.

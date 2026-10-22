@@ -32,8 +32,8 @@ android {
         targetSdk = 37
         multiDexEnabled = true
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = 73
-        versionName = "0.3.1"
+        versionCode = 74
+        versionName = "0.3.2"
         ndk { abiFilters += setOf("arm64-v8a", "armeabi-v7a") }
 
     }
