@@ -2321,6 +2321,7 @@ class CarPlayController(
                     "location=${config.identification.locationInformationEnabled} " +
                     "vehicleStatus=${config.identification.vehicleStatusEnabled}",
             )
+            val firstStartSentAtNs = java.util.concurrent.atomic.AtomicLong(0L)
             val result = Iap2WiredControlClient(csm, Iap2MfiAuthenticationClient(mfi)).run(
                 identification = config.identification,
                 endpoint = endpoint,
@@ -2329,8 +2330,26 @@ class CarPlayController(
                 locationProvider = locationProvider,
                 vehicleStatusProvider = vehicleStatusProvider,
                 onIncoming = ::onRouteFrame,
-                onProgress = ::onWiredControlProgress,
+                onProgress = { message ->
+                    if (message == "iap2 tx=0x4301 carplay-start-session") {
+                        firstStartSentAtNs.compareAndSet(0L, System.nanoTime())
+                    }
+                    onWiredControlProgress(message)
+                },
                 airPlayTcpArrived = { wiredTcpArrived.get() },
+                startSessionAgain = {
+                    val firstSent = firstStartSentAtNs.get()
+                    if (firstSent == 0L) Iap2WiredControlClient.StartAgain.DONE
+                    else WiredStartAgain.decide(
+                        nowNanos = System.nanoTime(),
+                        startSentAtNanos = firstSent,
+                        linkOpenedAtNanos = ncm.linkOpenedAtNanos,
+                        sessionActive = wiredTcpArrived.get(),
+                        connectionAttemptSinceLinkOpened = ncm.linkOpenedAtNanos?.let {
+                            ncm.connectionAttemptSince(endpoint.airPlayPort, it)
+                        } ?: false,
+                    )
+                },
             )
             onStatus(
                 when (result.terminal) {
