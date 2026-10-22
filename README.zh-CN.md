@@ -1,7 +1,7 @@
 # DiPlay · Geely Okavango
 
 专门适配 **2023 菲律宾版 Geely Okavango** 车机：E01 / VF12LQJ、MT6735、Android 5.1 / API 22、1920×720。
-当前版本 **0.3.1 / versionCode 73**，包名 `com.shihab.diplay.okavango`。
+当前版本 **0.3.2 / versionCode 74**，包名 `com.shihab.diplay.okavango`。
 
 有线 CarPlay 和方向盘上一首/下一首已在此前版本实车验证；无线仍未验证。
 ECARX/PopView 回调（163 下一首、165 上一首）以及独立的 Android MEDIA_BUTTON / MediaSession 均保留。

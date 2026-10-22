@@ -78,7 +78,9 @@ jobs:
   release:
     name: Sign APK and save draft Release
     needs: checks
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.create_release
+    # One-shot signed test builds require the explicit [signed-test] marker in a main merge commit.
+    # Retain the existing manual workflow_dispatch release path for future releases.
+    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.create_release) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[signed-test]')))
     environment: okavango-release
     runs-on: ubuntu-latest
     timeout-minutes: 30
